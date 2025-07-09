@@ -9,7 +9,7 @@ Portello is a method to liftover reads from sample assembly to reference
 Example IGV view showing portello liftover mappings vs standard pbmm2 mappings from the same set of reads:
 
 <p align="center">
-  <img src="img/portello_igv_example.png"  width="80%" height="80%">
+  <img src="img/portello_igv_example.png" width="80%" />
 </p>
 
 The example image show portello alignments (top) vs. pbmm2 (bottom) for the same set of HG002 HiFi reads at region `chr4:40,294,833-40,295,706`, the portello

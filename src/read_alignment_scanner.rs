@@ -14,13 +14,16 @@ use rust_vc_utils::{
 use unwrap::unwrap;
 
 use crate::cli;
-use crate::contig_alignment_scanner::{AssemblyContigMappingInfo, ContigMappingSegmentInfo};
+use crate::contig_alignment_scanner::{AllContigMappingInfo, ContigMappingSegmentInfo};
 use crate::globals::{PROGRAM_NAME, PROGRAM_VERSION};
+use crate::left_shift_alignment::left_shift_alignment;
 use crate::liftover_read_alignment::liftover_read_alignment;
+use crate::simplify_alignment_indels::simplify_alignment_indels;
 use crate::worker_thread_data::{BamReaderWorkerThreadDataSet, get_bam_reader_worker_thread_data};
 
 type SharedBamWriter = Arc<Mutex<bam::Writer>>;
 
+const NM_AUX_TAG: &[u8] = b"NM";
 const SA_AUX_TAG: &[u8] = b"SA";
 const PS_AUX_TAG: &[u8] = b"PS";
 const ZM_AUX_TAG: &[u8] = b"ZM";
@@ -102,6 +105,9 @@ fn get_contig_split_segments_from_read_mapping(
 fn clone_record(record: &bam::Record) -> bam::Record {
     let mut remapped_record = record.clone();
 
+    // remove aux tags that will be invalidated
+    remove_aux_if_found(&mut remapped_record, NM_AUX_TAG);
+
     // remove all aux tags that will be added/modified:
     remove_aux_if_found(&mut remapped_record, SA_AUX_TAG);
     remove_aux_if_found(&mut remapped_record, PS_AUX_TAG);
@@ -126,12 +132,15 @@ fn reverse_alignment_seq_and_qual(record: &mut bam::Record) {
     record.set(&qname, Some(&cigar), &rev_seq, &rev_qual);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn get_liftover_alignment_for_read_and_contig_segment(
+    reference: &[Vec<u8>],
     contig_list: &ChromList,
     record: &Record,
     read_segment: &SeqOrderSplitReadSegment,
     contig_segment_index: usize,
     contig_to_ref_mapping_segment_info: &ContigMappingSegmentInfo,
+    rev_contig_seq: Option<&[u8]>,
     debug: bool,
 ) -> Option<Record> {
     // Get contig to ref map for this contig segment:
@@ -141,8 +150,11 @@ fn get_liftover_alignment_for_read_and_contig_segment(
         .seq_order_segment
         .is_fwd_strand;
 
-    let read_segment_changes_strand_from_primary =
-        record.is_reverse() == read_segment.is_fwd_strand;
+    let need_flipped_read_alignment = {
+        let read_segment_changes_strand_from_primary =
+            record.is_reverse() == read_segment.is_fwd_strand;
+        (!contig_is_fwd_strand) ^ read_segment_changes_strand_from_primary
+    };
 
     let (read_to_contig_pos_on_ref_strand, read_to_contig_cigar_on_ref_strand) =
         if contig_is_fwd_strand {
@@ -153,7 +165,14 @@ fn get_liftover_alignment_for_read_and_contig_segment(
             let read_segment_end = read_segment.pos + get_cigar_ref_offset(&read_segment.cigar);
             let rev_pos = contig_length - read_segment_end;
             let rev_cigar = read_segment.cigar.iter().rev().cloned().collect::<Vec<_>>();
-            (rev_pos, rev_cigar)
+
+            // In addition to reversing the cigar elements, we need correct indel left-shift as well
+            let mut read_seq = record.seq().as_bytes();
+            if need_flipped_read_alignment {
+                rev_comp_in_place(&mut read_seq);
+            };
+            let rev_contig_seq = rev_contig_seq.unwrap();
+            left_shift_alignment(rev_pos, &rev_cigar, rev_contig_seq, &read_seq)
         };
 
     // recompute ref_pos and cigar string for this read
@@ -163,13 +182,13 @@ fn get_liftover_alignment_for_read_and_contig_segment(
         &read_to_contig_cigar_on_ref_strand,
     );
 
-    if let Some((ref2_pos, ref2_cigar)) = liftover_alignment {
+    if let Some((ref2_pos_orig, ref2_cigar_orig)) = liftover_alignment {
         if debug {
             eprintln!("Liftover result:");
             eprintln!("  Input read_segment pos: {}", read_segment.pos);
             eprintln!("Input read_segment cigar: {}", read_segment.cigar);
-            eprintln!("  Remapped pos: {ref2_pos}");
-            eprintln!("Remapped cigar: {}", CigarString(ref2_cigar.clone()));
+            eprintln!("  Remapped pos: {ref2_pos_orig}");
+            eprintln!("Remapped cigar: {}", CigarString(ref2_cigar_orig.clone()));
             let contig_index = read_segment.chrom_index;
             let contig_name = &contig_list.data[contig_index].label;
             eprintln!(
@@ -184,7 +203,7 @@ fn get_liftover_alignment_for_read_and_contig_segment(
 
         // TEMP verify the length of the remapped cigar string:
         use rust_vc_utils::cigar::get_cigar_read_offset;
-        let cigar_read_len = get_cigar_read_offset(&ref2_cigar, false);
+        let cigar_read_len = get_cigar_read_offset(&ref2_cigar_orig, false);
         if record.seq_len() != cigar_read_len {
             let qname = std::str::from_utf8(record.qname()).unwrap().to_string();
 
@@ -195,7 +214,7 @@ fn get_liftover_alignment_for_read_and_contig_segment(
                 cigar_read_len
             );
             eprintln!(".  Input read_segment cigar: {}", read_segment.cigar);
-            eprintln!("Remapped cigar: {}", CigarString(ref2_cigar.clone()));
+            eprintln!("Remapped cigar: {}", CigarString(ref2_cigar_orig.clone()));
             let contig_index = read_segment.chrom_index;
             let contig_name = &contig_list.data[contig_index].label;
             eprintln!(
@@ -209,13 +228,23 @@ fn get_liftover_alignment_for_read_and_contig_segment(
             panic!("Aborting...");
         }
 
+        // Add additional refinement step canonicalize indel clusters in the cigar string alignments:
+        let chrom_index = contig_to_ref_mapping_segment_info
+            .seq_order_segment
+            .chrom_index;
+
+        let (ref2_pos, ref2_cigar) = {
+            let chrom_ref = &reference[chrom_index];
+            let mut read_seq = record.seq().as_bytes();
+            if need_flipped_read_alignment {
+                rev_comp_in_place(&mut read_seq);
+            };
+            simplify_alignment_indels(ref2_pos_orig, &ref2_cigar_orig, chrom_ref, &read_seq)
+        };
+
         let mut remapped_record = clone_record(record);
 
-        remapped_record.set_tid(
-            contig_to_ref_mapping_segment_info
-                .seq_order_segment
-                .chrom_index as i32,
-        );
+        remapped_record.set_tid(chrom_index as i32);
 
         // Adopt MAPQ value from contig:
         let contig_mapq = contig_to_ref_mapping_segment_info.seq_order_segment.mapq;
@@ -242,7 +271,7 @@ fn get_liftover_alignment_for_read_and_contig_segment(
         remapped_record.set_pos(ref2_pos);
         remapped_record.set_cigar(Some(&CigarString(ref2_cigar)));
 
-        if (!contig_is_fwd_strand) ^ read_segment_changes_strand_from_primary {
+        if need_flipped_read_alignment {
             reverse_alignment_seq_and_qual(&mut remapped_record)
         };
 
@@ -258,7 +287,7 @@ fn get_liftover_alignment_for_read_and_contig_segment(
     }
 }
 
-/// Produce one split read segment in the format required within the SA aux tag
+/// Produce one split read segment string formatted for the SA aux tag
 ///
 fn get_sa_tag_segment(chrom_list: &ChromList, record: &Record) -> String {
     let chrom = &chrom_list.data[record.tid() as usize].label;
@@ -282,23 +311,28 @@ fn finish_remapped_alignment_set(
     ref_chrom_list: &ChromList,
     orig_primary_record: &bam::Record,
     mut remapped_records: Vec<bam::Record>,
+    is_target_region: bool,
 ) -> Vec<bam::Record> {
     let remapped_record_count = remapped_records.len();
     if remapped_record_count == 0 {
-        // Copy primary read-to-contig alignment into an unmapped alignment:
-        let mut unmapped_record = clone_record(orig_primary_record);
-        unmapped_record.set_unmapped();
-        unmapped_record.unset_supplementary();
-        unmapped_record.set_cigar(None);
-        unmapped_record.set_mapq(255);
-        unmapped_record.set_tid(-1);
-        unmapped_record.set_pos(-1);
+        if is_target_region {
+            vec![]
+        } else {
+            // Copy primary read-to-contig alignment into an unmapped alignment:
+            let mut unmapped_record = clone_record(orig_primary_record);
+            unmapped_record.set_unmapped();
+            unmapped_record.unset_supplementary();
+            unmapped_record.set_cigar(None);
+            unmapped_record.set_mapq(255);
+            unmapped_record.set_tid(-1);
+            unmapped_record.set_pos(-1);
 
-        if unmapped_record.is_reverse() {
-            reverse_alignment_seq_and_qual(&mut unmapped_record);
-        };
+            if unmapped_record.is_reverse() {
+                reverse_alignment_seq_and_qual(&mut unmapped_record);
+            };
 
-        vec![unmapped_record]
+            vec![unmapped_record]
+        }
     } else {
         // Determine which alignment is primary and flag it
         let mut primary_record_index = 0;
@@ -334,12 +368,14 @@ fn finish_remapped_alignment_set(
 #[allow(clippy::too_many_arguments)]
 fn scan_chromosome_segment(
     bam_reader: &mut bam::IndexedReader,
+    reference: &[Vec<u8>],
     ref_chrom_list: &ChromList,
     contig_list: &ChromList,
     contig_index: usize,
     begin: i64,
     end: i64,
-    contig_mapping_info: &AssemblyContigMappingInfo,
+    all_contig_mapping_info: &AllContigMappingInfo,
+    is_target_region: bool,
     remapped_bam_writer: &mut SharedBamWriter,
     progress_reporter: &ProgressReporter,
 ) {
@@ -396,11 +432,12 @@ fn scan_chromosome_segment(
                 eprintln!("Starting to process read_segment_index {read_segment_index}");
             }
 
-            let contig_to_ref_info = &contig_mapping_info[read_segment.chrom_index];
+            let contig_mapping_info = &all_contig_mapping_info[read_segment.chrom_index];
+            let contig_segments = &contig_mapping_info.ordered_contig_segment_info;
 
-            // Find the range of contig segments the read is mapped to:
+            // Find the range of contig segments this read segment is mapped to:
             let contig_segment_indexes =
-                get_contig_split_segments_from_read_mapping(read_segment, contig_to_ref_info);
+                get_contig_split_segments_from_read_mapping(read_segment, contig_segments);
 
             if debug {
                 eprintln!(
@@ -408,7 +445,7 @@ fn scan_chromosome_segment(
                     contig_segment_indexes.len()
                 );
                 for x in contig_segment_indexes.iter() {
-                    let contig_to_ref_mapping_segment_info = &contig_to_ref_info[*x];
+                    let contig_to_ref_mapping_segment_info = &contig_segments[*x];
                     eprintln!(
                         "contig_segment_index {} details: {:?}",
                         *x, contig_to_ref_mapping_segment_info.seq_order_segment
@@ -417,13 +454,15 @@ fn scan_chromosome_segment(
             }
 
             for contig_segment_index in contig_segment_indexes {
-                let contig_to_ref_mapping_segment_info = &contig_to_ref_info[contig_segment_index];
+                let contig_to_ref_mapping_segment_info = &contig_segments[contig_segment_index];
                 let remapped_record = get_liftover_alignment_for_read_and_contig_segment(
+                    reference,
                     contig_list,
                     &record,
                     read_segment,
                     contig_segment_index,
                     contig_to_ref_mapping_segment_info,
+                    contig_mapping_info.rev_contig_seq.as_deref(),
                     debug,
                 );
                 if let Some(x) = remapped_record {
@@ -432,8 +471,12 @@ fn scan_chromosome_segment(
             }
         }
 
-        let remapped_records =
-            finish_remapped_alignment_set(ref_chrom_list, &record, remapped_records);
+        let remapped_records = finish_remapped_alignment_set(
+            ref_chrom_list,
+            &record,
+            remapped_records,
+            is_target_region,
+        );
 
         // Output full primary+supplementary set of remapped alignments
         {
@@ -452,11 +495,13 @@ fn scan_chromosome_segment(
 fn scan_chromosome_segments(
     worker_thread_dataset: BamReaderWorkerThreadDataSet,
     scan_settings: &ScanSettings,
+    reference: &[Vec<u8>],
     ref_chrom_list: &ChromList,
     contig_list: &ChromList,
     contig_index: usize,
     contig_size: u64,
-    contig_mapping_info: &AssemblyContigMappingInfo,
+    all_contig_mapping_info: &AllContigMappingInfo,
+    is_target_region: bool,
     remapped_bam_writer: &mut SharedBamWriter,
     progress_reporter: &ProgressReporter,
 ) {
@@ -473,12 +518,14 @@ fn scan_chromosome_segments(
 
                 scan_chromosome_segment(
                     bam_reader,
+                    reference,
                     ref_chrom_list,
                     contig_list,
                     contig_index,
                     begin as i64,
                     end as i64,
-                    contig_mapping_info,
+                    all_contig_mapping_info,
+                    is_target_region,
                     &mut remapped_bam_writer,
                     progress_reporter,
                 );
@@ -519,8 +566,10 @@ struct ScanSettings {
 pub fn scan_and_remap_reads(
     settings: &cli::Settings,
     thread_count: usize,
+    reference: &[Vec<u8>],
     ref_chrom_list: &ChromList,
-    contig_mapping_info: &AssemblyContigMappingInfo,
+    all_contig_mapping_info: &AllContigMappingInfo,
+    is_target_region: bool,
 ) {
     let scan_settings = &ScanSettings {
         segment_size: 20_000_000,
@@ -596,11 +645,13 @@ pub fn scan_and_remap_reads(
                 scan_chromosome_segments(
                     worker_thread_dataset,
                     scan_settings,
+                    reference,
                     ref_chrom_list,
                     assembly_contig_list,
                     contig_index,
                     contig_size,
-                    contig_mapping_info,
+                    all_contig_mapping_info,
+                    is_target_region,
                     &mut remapped_bam_writer,
                     progress_reporter,
                 );

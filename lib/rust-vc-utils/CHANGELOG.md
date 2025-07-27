@@ -1,6 +1,11 @@
+## v0.32.0 - 2025-07-XX
+
+### Added
+- Add sawfish `get_indel_breakend_homology_info` method.
+
 ## v0.31.0 - 2025-07-09
 
-This updates includes numerous additions to support the initial release of portello.
+This update includes numerous additions to support the initial release of portello.
 
 ### Added
 - Add `assert_bam_eof` method to assert that bam/cram files are not truncated

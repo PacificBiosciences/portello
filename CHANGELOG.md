@@ -1,5 +1,13 @@
 # Change Log
 
+## v0.4.0 - 2025-07-27
+
+- Simplify complex indels resulting from alignment liftover
+  - The liftover process can create combined deletion/insertion events in the alignment. These are now locally simplified to minimize indel size and/or edit distance.
+- CR-501 Improve indel left-shift consistency.
+  - Reads aligning to assembly contigs which have a reverse mapping to the reference need to be updated from right-shift to left-shift when the alignment orientation flips.
+- Add support for cram file inputs which include bzip2 and lzma codec blocks
+
 ## v0.3.0 - 2025-07-09
 
 - Add initial documentation

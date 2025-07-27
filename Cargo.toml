@@ -1,6 +1,6 @@
 [package]
 name = "portello"
-version = "0.2.0"
+version = "0.4.0"
 authors = ["Chris Saunders <csaunders@pacificbiosciences.com>"]
 description = "Lifts read alignments from personal assembly to reference"
 edition = "2024"
@@ -19,7 +19,7 @@ hhmmss = "0.1"
 log = "0.4"
 num_cpus = "1"
 rayon = "1"
-rust-htslib = { version = "0.50", default-features = false }
+rust-htslib = { version = "0.50", default-features = false, features = ["bzip2", "lzma"] }
 rust-vc-utils = { path="lib/rust-vc-utils" }
 simple-error = "0.3"
 unwrap = "1"

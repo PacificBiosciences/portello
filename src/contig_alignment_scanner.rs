@@ -9,7 +9,7 @@ use rust_vc_utils::cigar::get_read_clip_positions;
 use rust_vc_utils::{
     ChromList, GenomeSegment, IntRange, ProgressReporter, ReadToRefTreeMap,
     SeqOrderSplitReadSegment, get_read_segment_to_ref_pos_tree_map,
-    get_region_segments_with_offset, get_seq_order_read_split_segments,
+    get_region_segments_with_offset, get_seq_order_read_split_segments, rev_comp_in_place,
 };
 use unwrap::unwrap;
 
@@ -18,6 +18,15 @@ use crate::worker_thread_data::{BamReaderWorkerThreadDataSet, get_bam_reader_wor
 pub struct ContigMappingSegmentInfo {
     pub seq_order_segment: SeqOrderSplitReadSegment,
     pub contig_to_ref_map: ReadToRefTreeMap,
+}
+
+/// All contig info that will ultimately be shared, including all split alignments, and the reverse contig sequence for
+/// any contigs with reverse mappings to the reference
+///
+#[derive(Default)]
+pub struct ContigMappingInfo {
+    pub ordered_contig_segment_info: Vec<ContigMappingSegmentInfo>,
+    pub rev_contig_seq: Option<Vec<u8>>,
 }
 
 #[derive(Eq, Ord, PartialEq, PartialOrd)]
@@ -33,7 +42,7 @@ struct SplitReadZipCode {
 ///
 #[derive(Default)]
 struct ContigCell {
-    pub ordered_contig_segment_info: Option<Vec<ContigMappingSegmentInfo>>,
+    pub contig_mapping_info: Option<ContigMappingInfo>,
 
     /// Accurate cigar strings taken directly from the split read alignments
     pub supp_cigars: BTreeMap<SplitReadZipCode, (CigarString, ReadToRefTreeMap)>,
@@ -45,7 +54,7 @@ type ParallelContigCell = Arc<Mutex<ContigCell>>;
 ///
 /// The outer vector is ordered by assembly contig index
 ///
-pub type AssemblyContigMappingInfo = Vec<Vec<ContigMappingSegmentInfo>>;
+pub type AllContigMappingInfo = Vec<ContigMappingInfo>;
 
 #[allow(clippy::too_many_arguments)]
 fn scan_chromosome_segment(
@@ -107,10 +116,29 @@ fn scan_chromosome_segment(
                 })
                 .collect::<Vec<_>>();
 
+            let need_rev_contig_seq = ordered_contig_segment_info
+                .iter()
+                .any(|x| !x.seq_order_segment.is_fwd_strand);
+
+            let rev_contig_seq = if need_rev_contig_seq {
+                let mut rev_seq = record.seq().as_bytes();
+                if !record.is_reverse() {
+                    rev_comp_in_place(&mut rev_seq);
+                }
+                Some(rev_seq)
+            } else {
+                None
+            };
+
+            let contig_mapping_info = ContigMappingInfo {
+                ordered_contig_segment_info,
+                rev_contig_seq,
+            };
+
             parallel_contig_data[contig_id]
                 .lock()
                 .unwrap()
-                .ordered_contig_segment_info = Some(ordered_contig_segment_info);
+                .contig_mapping_info = Some(contig_mapping_info);
         } else {
             let zip = {
                 let (leading_cigar_clip, trailing_cigar_clip) = {
@@ -217,7 +245,7 @@ pub fn scan_contig_bam(
     ref_chrom_list: &ChromList,
     assembly_contig_list: &ChromList,
     target_region: Option<&GenomeSegment>,
-) -> AssemblyContigMappingInfo {
+) -> AllContigMappingInfo {
     let scan_settings = &ScanSettings {
         segment_size: 20_000_000,
     };
@@ -295,14 +323,14 @@ pub fn scan_contig_bam(
         .into_iter().enumerate()
         .map(|(contig_index, x)| {
             let mut ulx = x.lock().unwrap();
-            let mut ordered_contig_segments = ulx
-                .ordered_contig_segment_info
+            let mut contig_mapping_info = ulx
+                .contig_mapping_info
                 .take()
-                .unwrap_or_else(Vec::new);
+                .unwrap_or_default();
 
             let mut missing_match_failure = false;
 
-            for contig_segment in ordered_contig_segments
+            for contig_segment in contig_mapping_info.ordered_contig_segment_info
                 .iter_mut()
                 .filter(|x| !x.seq_order_segment.from_primary_bam_record)
             {
@@ -351,7 +379,7 @@ pub fn scan_contig_bam(
 
             if missing_match_failure {
                 eprintln!("All split alignments for contig:");
-                for (contig_segment_index, seq_order_segment) in ordered_contig_segments.iter().map(|x| &x.seq_order_segment).enumerate() {
+                for (contig_segment_index, seq_order_segment) in contig_mapping_info.ordered_contig_segment_info.iter().map(|x| &x.seq_order_segment).enumerate() {
                     let segment_range = IntRange::from_pair(
                          seq_order_segment.seq_order_read_start as i64,
                          seq_order_segment.seq_order_read_end as i64,
@@ -368,7 +396,7 @@ pub fn scan_contig_bam(
                 }
                 panic!("Can't find supplementary alignment record corresponding to segment reported in SA tag");
             }
-            ordered_contig_segments
+            contig_mapping_info
         })
         .collect();
 

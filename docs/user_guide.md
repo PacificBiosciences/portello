@@ -16,30 +16,37 @@ The expected workflow to use it is:
 
 ## Usage Example:
 
-Portello requires two primary file inputs:
-1. Contig to reference alignments
-2. Read to contig alignments
+Portello requires a reference genome and two alignment file inputs:
+1. Assembly contig to reference alignments
+2. Read to assembly contig alignments
 
-See the inputs section below for more details on recommendations for these files.
+See the inputs section below for more details on recommendations for these alignment files.
 
-Given these two input alignment files, a typical liftover command is demonstrated below. Note that all direct BAM output
-from portello is unsorted, so piping the liftover reads directly into a tool like `samtools sort` is a best practice to
-efficiently obtain an IGV/variant-caller ready liftover bam file.
+Given these two input alignment files represented as `$asm_to_ref_bam` and `$read_to_asm_bam`, a typical liftover
+command is demonstrated below. Note that all direct BAM output from portello is unsorted, so piping the liftover reads
+directly into a tool like `samtools sort` is a best practice to efficiently obtain an indexed liftover bam file.
 
 ```
 threads=16
-portello --threads $threads --assembly-to-ref $asm_to_ref --read-to-assembly $read_to_asm --remapped-read-output - --unassembled-read-output unasm.bam |\
-samtools sort -@$threads - --write-index -O BAM -o remapped.sort.bam
+portello \
+  --threads $threads \
+  --ref $ref_fasta \
+  --assembly-to-ref $asm_to_ref_bam \
+  --read-to-assembly $read_to_asm_bam \
+  --remapped-read-output - \
+  --unassembled-read-output unasm.bam |\
+samtools sort -@$threads - --write-index -o remapped.sort.bam
 ```
 
-When viewing the output `remapped.sort.bam` in IGV, it is recommended to group on the `PS` tag, to see a phased-like
+When viewing the output `remapped.sort.bam` in IGV, it is recommended to group on the `PS` tag, to see a pseudo-phased
 view of the read alignments by grouping the reads to their respective assembly contigs. See the [Tags](#tags) section
 below for details of the `PS` tag string.
 
 ## Inputs
 
 Best practice and expectations for input alignment files are provided below. Note that secondary reads in either input
-file will be ignored.
+file will be ignored. It is assumed that both input alignment files are left-shifting alignment indels, portello will
+take steps to preserve this left-shifting in the remapped output.
 
 ### Read-to-assembly alignments
 
@@ -84,11 +91,10 @@ portello doesn't use. These won't help or hurt the process.
 
 ## Outputs
 
-Note that all BAM outputs directly from portello are unsorted. The two bam output files are for "unassembled" and
-"remapped" reads. Between these two output files every input read should be represented by exactly one primary read in
-one of the two outputs. Both of these output files may contain unmapped reads, but they're separated into two separate
-files because the two sets of unmapped reads may have very different interpretations in possible downstream processing
-steps.
+All BAM outputs from portello are unsorted. The two bam output files are for "unassembled" and "remapped" reads. Every
+input read should be represented by exactly one primary read in one of the two outputs files. Both of these output files
+may contain unmapped reads, but they're separated into two separate files because they may have different
+interpretations relevant to downstream processing steps.
 
 ### Unassembled read output
 
@@ -101,7 +107,7 @@ regions that are more difficult to assemble or have QC issues. At lower depth, t
 simply couldn't be assembled due to coverage, so conventional re-mapping of these reads could be useful to supplement
 the liftover reads.
 
-###  Remapped read output
+### Remapped read output
 
 This output contains all reads that mapped to the assembly contigs, and have been lifted over to the target reference
 genome. Unmapped reads in this file should correspond to assembly contig regions which did not map to the reference, so

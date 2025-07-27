@@ -1,16 +1,18 @@
 mod cli;
 mod contig_alignment_scanner;
 mod globals;
+mod left_shift_alignment;
 mod liftover_read_alignment;
 mod logger;
 mod read_alignment_scanner;
+mod simplify_alignment_indels;
 mod worker_thread_data;
 
 use std::{error, process};
 
 use hhmmss::Hhmmss;
 use log::info;
-use rust_vc_utils::{ChromList, GenomeSegment};
+use rust_vc_utils::{ChromList, GenomeSegment, get_genome_ref_from_fasta};
 
 use crate::cli::{DerivedSettings, Settings, validate_and_fix_settings, validate_settings_data};
 use crate::contig_alignment_scanner::scan_contig_bam;
@@ -39,7 +41,18 @@ fn run(
         .as_ref()
         .map(|x| GenomeSegment::from_region_str(&ref_chrom_list, x));
 
-    let contig_mapping_info = scan_contig_bam(
+    // Load reference sequence but move it from chrom name hash to chrom index lookup array:
+    let reference = {
+        let mut r = get_genome_ref_from_fasta(settings.ref_filename.as_str())
+            .chroms
+            .into_iter()
+            .map(|(label, val)| (*ref_chrom_list.label_to_index.get(&label).unwrap(), val))
+            .collect::<Vec<_>>();
+        r.sort_by_key(|(x, _)| *x);
+        r.into_iter().map(|(_, x)| x).collect::<Vec<_>>()
+    };
+
+    let all_contig_mapping_info = scan_contig_bam(
         &settings.assembly_to_ref_bam,
         derived_settings.thread_count,
         &ref_chrom_list,
@@ -50,8 +63,10 @@ fn run(
     scan_and_remap_reads(
         settings,
         derived_settings.thread_count,
+        &reference,
         &ref_chrom_list,
-        &contig_mapping_info,
+        &all_contig_mapping_info,
+        target_region.is_some(),
     );
 
     info!(

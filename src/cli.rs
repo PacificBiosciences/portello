@@ -57,9 +57,14 @@ pub struct Settings {
     #[arg(long, value_name = "FILE")]
     pub unassembled_read_output: Utf8PathBuf,
 
+    /// Genome reference in FASTA format
+    #[arg(long = "ref", value_name = "FILE")]
+    pub ref_filename: Utf8PathBuf,
+
     /// Specify a target region for conversion
     ///
-    /// This option is provided strictly for debugging at this point, to allow fast test conversion of smaller regions.
+    /// This option is for debugging only, to allow fast test conversion of smaller regions. This will not give the same
+    /// result as a non-targeted run with region selection on the sorted remapped read bam.
     ///
     #[arg(long)]
     pub target_region: Option<String>,
@@ -92,6 +97,8 @@ fn validate_and_fix_settings_impl(settings: &Settings) -> SimpleResult<DerivedSe
     check_required_filename(&settings.assembly_to_ref_bam, "contig-to-ref bam")?;
 
     check_required_filename(&settings.read_to_assembly_bam, "read-to-contig bam")?;
+
+    check_required_filename(&settings.ref_filename, "reference fasta")?;
 
     fn validate_output_dir_exists(filename: &Utf8Path, label: &str) -> SimpleResult<()> {
         if filename.as_str().is_empty() {

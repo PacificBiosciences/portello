@@ -73,18 +73,14 @@ minimap2 \
   --secondary=no \
   -a \
   -x asm5 \
-  -z 400.50 \
-  -A 1 -B 4 -O 6.26 -E 2.1 \
   -R "@RG\tID:HG002_hifiasm\tSM:HG002" \
   $ref \
   $reads |\
 samtools sort -@$threads - --write-index -O BAM -o HG002.asm.GRCh38.bam
 ```
 
-This strategy uses the `asm5` preset for seeding/chaining the contig mappings, but uses the z-drop parameters (`-z
-400.50`) from pbmm2 to improve contiguity of the contig alignments, as well as the alignment weights from pbmm2 (`-A 1
--B 4 -O 6.26 -E 2.1`), to create a more pbmm2-like indel size distributions, to facilitate greater compatibility for
-downstream tools which typically operate on pbmm2 inputs.
+This strategy uses the `asm5` minimap2 preset to map sample-specific assembly contigs to the reference, which should be
+a good choice for human sample analysis.
 
 Note the common additional minimap2 options `--eqx`, `--cs` and `-Y` add more information to the alignments that
 portello doesn't use. These won't help or hurt the process.

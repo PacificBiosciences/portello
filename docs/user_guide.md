@@ -24,7 +24,8 @@ See the inputs section below for more details on recommendations for these align
 
 Given these two input alignment files represented as `$asm_to_ref_bam` and `$read_to_asm_bam`, a typical liftover
 command is demonstrated below. Note that all direct BAM output from portello is unsorted, so piping the liftover reads
-directly into a tool like `samtools sort` is a best practice to efficiently obtain an indexed liftover bam file.
+into a tool like `samtools sort` is a best practice to efficiently obtain an indexed liftover bam file, as illustrated
+in the example below:
 
 ```
 threads=16
@@ -34,7 +35,7 @@ portello \
   --assembly-to-ref $asm_to_ref_bam \
   --read-to-assembly $read_to_asm_bam \
   --remapped-read-output - \
-  --unassembled-read-output unasm.bam |\
+  --unassembled-read-output unassembled_read.bam |\
 samtools sort -@$threads - --write-index -o remapped.sort.bam
 ```
 
@@ -45,7 +46,7 @@ below for details of the `PS` tag string.
 ## Inputs
 
 Best practice and expectations for input alignment files are provided below. Note that secondary reads in either input
-file will be ignored. It is assumed that both input alignment files are left-shifting alignment indels, portello will
+file will be ignored. It is assumed that both input files have alignments with left-shifted indels. Portello will
 take steps to preserve this left-shifting in the remapped output.
 
 ### Read-to-assembly alignments
@@ -72,6 +73,7 @@ minimap2 \
   -L \
   --secondary=no \
   -a \
+  --eqx \
   -x asm5 \
   -R "@RG\tID:HG002_hifiasm\tSM:HG002" \
   $ref \
@@ -80,22 +82,23 @@ samtools sort -@$threads - --write-index -O BAM -o HG002.asm.GRCh38.bam
 ```
 
 This strategy uses the `asm5` minimap2 preset to map sample-specific assembly contigs to the reference, which should be
-a good choice for human sample analysis.
+a good choice for human sample analysis. Note that the `--eqx` option to provide CIGAR strings with `=` and `X` match
+values is required.
 
-Note the common additional minimap2 options `--eqx`, `--cs` and `-Y` add more information to the alignments that
-portello doesn't use. These won't help or hurt the process.
+The common additional minimap2 options `--cs` and `-Y` add more information to the alignments that portello doesn't use.
+These won't help or hurt the process.
 
 ## Outputs
 
 All BAM outputs from portello are unsorted. The two bam output files are for "unassembled" and "remapped" reads. Every
 input read should be represented by exactly one primary read in one of the two outputs files. Both of these output files
-may contain unmapped reads, but they're separated into two separate files because they may have different
-interpretations relevant to downstream processing steps.
+may contain unmapped reads, but they're separated into two separate files because the unmapped reads in each file have
+different interpretations relevant to downstream processing steps, as discussed below.
 
 ### Unassembled read output
 
-This output separates out all of the unmapped reads from the input read-to-contig alignments. These are interpreted as
-'unassembled' since they don't have a mapping to the assembly contigs, and the default portello workflow assumption is
+This output contains all unmapped reads from the input read-to-contig alignment file. These reads are interpreted as
+'unassembled' since they don't have a mapping to any assembly contig, and the default portello workflow assumption is
 that the input reads are the same ones used to generate the assembly.
 
 Followup usage of this file may depend on workflow details. At higher depth, these reads are likely to correspond to
@@ -107,8 +110,24 @@ the liftover reads.
 
 This output contains all reads that mapped to the assembly contigs, and have been lifted over to the target reference
 genome. Unmapped reads in this file should correspond to assembly contig regions which did not map to the reference, so
-may represent population-specific sequence or other content missing from the reference.
+may represent population-specific and large insertion sequences.
 
+## Secondary analysis on portello remapped output
+
+Portello remapped read output has been tested on DeepVariant and some other secondary analysis tools designed for conventional
+pbmm2-mapped BAM inputs. Results generally seem very good, but note the following suggestions:
+
+- **Enable use of supplementary reads** - A distinguishing features of portello remapped reads is that they retain very
+high quality alignments around SVs, so supplementary reads should be used in all cases. We note that this is not the
+default setting for the current (v1.9) DeepVariant release -- enabling it yields improved small variant recall and F1
+scores.
+
+- **Interpret the PS tag with care** - The PS tag in the portello output shows which contig each read was mapped to, and
+  more specifically which split read segment of the contig it was mapped to. When visualizing portello BAMs in IGV it is
+  extremely useful to show a pseudo-phased view of the reads by grouping them on this tag. Note, however that each
+  assembly algorithm has a different approach to contig contiguity through LOH regions, so a read segment with one PS
+  tag is not equivalent to a single haplotype phase block, since it could continue through large LOH regions with
+  possible phase switching.
 
 ## Other Notes
 
@@ -116,12 +135,11 @@ may represent population-specific sequence or other content missing from the ref
 
 The MAPQ value of liftover read alignment segments is taken form the contig split alignment segment that that read
 segment was mapped to. The read's original MAPQ to the contig alignments is stored in the record under `ZM`. This will
-often be zero, which is most often a reflection of ambiguous alignment between the hap1 and hap2 contigs, so it seems
-like this should be used for phasing quality at some point.
+often be zero, which is most often a reflection of ambiguous alignment between the 2 parental contigs.
 
 ### Tags
 
-Temporary diagnostic tags added to the remapped read output, these are likely to change in future:
+The following diagnostic tags added to the remapped read output, these are likely to change in future:
 
 `PS` - This tag can be used for read grouping in IGV to create a pseudo-phased view of the alignments. It is
 `{contig_name}_split{split_alignment_no}{strand}`, where `contig_name` is the contig the read aligned to, `split
@@ -129,3 +147,8 @@ alignment no` refers to which of that contigs split alignments the read aligned 
 contig alignments orientation to the reference.
 
 `ZM` - original MAPQ of the read alignments
+
+### Determinism
+
+All bam outputs from portello are unsorted, and with a non-deterministic output order. However, if fully sorted, the bam
+output contents should be identical over repeated runs with matching inputs.

@@ -1,3 +1,5 @@
+mod contig_repeated_match_trimmer;
+
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex};
 
@@ -13,6 +15,7 @@ use rust_vc_utils::{
 };
 use unwrap::unwrap;
 
+use self::contig_repeated_match_trimmer::clip_repeated_contig_matches;
 use crate::worker_thread_data::{BamReaderWorkerThreadDataSet, get_bam_reader_worker_thread_data};
 
 pub struct ContigMappingSegmentInfo {
@@ -25,12 +28,18 @@ pub struct ContigMappingSegmentInfo {
 ///
 #[derive(Default)]
 pub struct ContigMappingInfo {
+    /// Contig name, only used to improve error messages:
+    pub qname: String,
+
+    /// Primary contig mapping information structure
     pub ordered_contig_segment_info: Vec<ContigMappingSegmentInfo>,
+
+    /// Revcomp of the contig sequence, used to left-shift indel alignments on any reverse mapped contigs
     pub rev_contig_seq: Option<Vec<u8>>,
 }
 
 #[derive(Eq, Ord, PartialEq, PartialOrd)]
-struct SplitReadZipCode {
+struct SplitReadKey {
     pub chrom_index: usize,
     pub pos: i64,
     pub is_fwd_strand: bool,
@@ -45,7 +54,7 @@ struct ContigCell {
     pub contig_mapping_info: Option<ContigMappingInfo>,
 
     /// Accurate cigar strings taken directly from the split read alignments
-    pub supp_cigars: BTreeMap<SplitReadZipCode, (CigarString, ReadToRefTreeMap)>,
+    pub supp_cigars: BTreeMap<SplitReadKey, (CigarString, ReadToRefTreeMap)>,
 }
 
 type ParallelContigCell = Arc<Mutex<ContigCell>>;
@@ -130,7 +139,9 @@ fn scan_chromosome_segment(
                 None
             };
 
+            let qname = std::str::from_utf8(record.qname()).unwrap().to_string();
             let contig_mapping_info = ContigMappingInfo {
+                qname,
                 ordered_contig_segment_info,
                 rev_contig_seq,
             };
@@ -148,7 +159,7 @@ fn scan_chromosome_segment(
                         get_read_clip_positions(cigar_vec, ignore_hard_clip);
                     (read_start as u32, (read_size - read_end) as u32)
                 };
-                SplitReadZipCode {
+                SplitReadKey {
                     chrom_index: record.tid() as usize,
                     pos: record.pos(),
                     is_fwd_strand: !record.is_reverse(),
@@ -164,7 +175,7 @@ fn scan_chromosome_segment(
                 .supp_cigars
                 .insert(zip, (record.cigar().take(), read_to_ref_tree_map));
 
-            if ret.is_some() {
+            if let Some((old_cigar, _)) = ret {
                 let qname = std::str::from_utf8(record.qname()).unwrap().to_string();
                 eprintln!("Can't uniquely identify split read alignment info in contig '{qname}'");
                 let ref_chrom_name = &ref_chrom_list.data[record.tid() as usize].label;
@@ -176,8 +187,7 @@ fn scan_chromosome_segment(
                     !record.is_reverse(),
                     record.cigar()
                 );
-                let (a, _) = ret.unwrap();
-                eprintln!("old insert cigar string: {a}");
+                eprintln!("old insert cigar string: {old_cigar}");
                 panic!("Can't uniquely identify split read alignment info in contig '{qname}'");
             }
         }
@@ -292,10 +302,10 @@ pub fn scan_contig_bam(
             let chrom_info = &ref_chrom_list.data[chrom_index];
             let chrom_size = chrom_info.length;
 
-            if let Some(target_region) = target_region {
-                if chrom_index != target_region.chrom_index {
-                    continue;
-                }
+            if let Some(target_region) = target_region
+                && chrom_index != target_region.chrom_index
+            {
+                continue;
             }
 
             let worker_thread_dataset = worker_thread_dataset.clone();
@@ -319,7 +329,7 @@ pub fn scan_contig_bam(
     let mut contigs_with_missing_supp_match_count: HashSet<String> = Default::default();
 
     // Convert consolidated contig data in each contig_cell into final complete split read mapping data structure
-    let result = parallel_contig_data
+    let mut result : Vec<_> = parallel_contig_data
         .into_iter().enumerate()
         .map(|(contig_index, x)| {
             let mut ulx = x.lock().unwrap();
@@ -341,7 +351,7 @@ pub fn scan_contig_bam(
                         let (read_start, read_end, read_size) = get_read_clip_positions(cigar_vec, ignore_hard_clip);
                         (read_start as u32, (read_size-read_end) as u32)
                     };
-                    SplitReadZipCode {
+                    SplitReadKey {
                         chrom_index: contig_segment.seq_order_segment.chrom_index,
                         pos: contig_segment.seq_order_segment.pos,
                         is_fwd_strand: contig_segment.seq_order_segment.is_fwd_strand,
@@ -407,6 +417,8 @@ pub fn scan_contig_bam(
             contigs_with_missing_supp_match_count.len(),
         );
     }
+
+    clip_repeated_contig_matches(&mut result);
 
     result
 }

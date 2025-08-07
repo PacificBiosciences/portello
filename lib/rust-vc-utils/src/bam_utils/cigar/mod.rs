@@ -1,6 +1,14 @@
 //! BAM record cigar-processing utilities
 //!
 
+mod clip_alignment;
+mod score_alignment;
+mod shift_indels;
+
+pub use clip_alignment::*;
+pub use score_alignment::*;
+pub use shift_indels::*;
+
 use rust_htslib::bam::record::{self, Cigar};
 
 /// Is the cigar element any of the alignment match types?

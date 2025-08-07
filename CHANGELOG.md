@@ -1,5 +1,11 @@
 # Change Log
 
+## v0.5.0 - 2025-08-07
+
+- CR-499 Add repeated match trimming to clip repeated assembly contig mapping regions down to a single copy
+  - As a result of this update, each read base should now map to no more than one reference site in the remapped bam
+    output (if following best-practice protocols for the input alignments)
+
 ## v0.4.0 - 2025-07-27
 
 - Simplify complex indels resulting from alignment liftover

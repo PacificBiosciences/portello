@@ -1,7 +1,6 @@
 mod cli;
 mod contig_alignment_scanner;
 mod globals;
-mod left_shift_alignment;
 mod liftover_read_alignment;
 mod logger;
 mod read_alignment_scanner;

@@ -7,6 +7,7 @@ use rust_htslib::bam::{self, CompressionLevel, Read};
 use rust_htslib::htslib;
 use rust_vc_utils::aux::remove_aux_if_found;
 use rust_vc_utils::cigar::get_cigar_ref_offset;
+use rust_vc_utils::cigar::left_shift_indels;
 use rust_vc_utils::{
     ChromList, IntRange, ProgressReporter, SeqOrderSplitReadSegment, bam_reg2bin,
     get_alignment_end, get_region_segments, get_seq_order_read_split_segments, rev_comp_in_place,
@@ -16,7 +17,6 @@ use unwrap::unwrap;
 use crate::cli;
 use crate::contig_alignment_scanner::{AllContigMappingInfo, ContigMappingSegmentInfo};
 use crate::globals::{PROGRAM_NAME, PROGRAM_VERSION};
-use crate::left_shift_alignment::left_shift_alignment;
 use crate::liftover_read_alignment::liftover_read_alignment;
 use crate::simplify_alignment_indels::simplify_alignment_indels;
 use crate::worker_thread_data::{BamReaderWorkerThreadDataSet, get_bam_reader_worker_thread_data};
@@ -172,7 +172,7 @@ fn get_liftover_alignment_for_read_and_contig_segment(
                 rev_comp_in_place(&mut read_seq);
             };
             let rev_contig_seq = rev_contig_seq.unwrap();
-            left_shift_alignment(rev_pos, &rev_cigar, rev_contig_seq, &read_seq)
+            left_shift_indels(rev_pos, &rev_cigar, rev_contig_seq, &read_seq)
         };
 
     // recompute ref_pos and cigar string for this read

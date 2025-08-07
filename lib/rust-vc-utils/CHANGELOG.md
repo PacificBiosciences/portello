@@ -1,7 +1,10 @@
 ## v0.32.0 - 2025-07-XX
 
 ### Added
-- Add sawfish `get_indel_breakend_homology_info` method.
+- Add alignment edit distance and reorg gap-compressed identity
+- Add alignment clipping routines from sawfish
+- Add indel left and right-shift methods from portello
+- Add sawfish `get_indel_breakend_homology_info` method
 
 ## v0.31.0 - 2025-07-09
 

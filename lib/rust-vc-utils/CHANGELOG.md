@@ -1,4 +1,17 @@
-## v0.32.0 - 2025-07-XX
+## v0.33.0 - 2025-XX-XX
+
+### Added
+- Add drop_true from sawfish
+- New methods to remove clipped regions from cigars
+
+### Changed
+
+- In all cigar shift routines, reverse cigar indel cluster ordering such that insertion state is always ordered first
+- Add method to restrict GenomeRef sequence characters
+- Make reverse comp methods tolerant to unexpected characters
+  - Still not supporting IUPAC ambiguity codes
+
+## v0.32.0 - 2025-08-07
 
 ### Added
 - Add alignment edit distance and reorg gap-compressed identity

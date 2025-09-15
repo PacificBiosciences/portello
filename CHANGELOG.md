@@ -1,5 +1,12 @@
 # Change Log
 
+## v0.6.0 - 2025-09-15
+
+- CR-532 Join colinear contig alignments
+  - These are splits in the contig alignment triggered by minimap2 Z-drop criteria.
+- Fix repeated match trimming for assembly contigs
+- Fix target region option for debugging
+
 ## v0.5.0 - 2025-08-07
 
 - CR-499 Add repeated match trimming to clip repeated assembly contig mapping regions down to a single copy

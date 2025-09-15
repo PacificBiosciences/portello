@@ -7,6 +7,9 @@ use crate::cigar::{clean_up_cigar_edge_indels, compress_cigar, update_ref_and_re
 ///
 /// Does not preserve X/= match states in right-shifted output
 ///
+/// Indels may be fused into combined into insertion deletion events. All such events
+/// will be output in "nImD" format (ie. insertion before deletion state in cigar string)
+///
 /// Returns a 2-tuple of:
 /// 1. Shifted ref pos (see note below)
 /// 2. Shifted alignment cigar

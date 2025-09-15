@@ -16,6 +16,13 @@ which are mapped to two different genomic locations across two split read alignm
 the contig mapping information by selecting the segment match location with high gap-compressed identity and clipping
 out any other mappings of that segment in other split reads.
 
+After repeated match trimming, portello identifies adjacent split alignment segments of the assembly contigs which are
+colinear, and joins these together. Joining such segments into one continuous alignment makes it easier to view the
+alignments in IGV and recognize that the phasing relationship across the split alignment segment gap. Such gaps are
+typically created by minimap2 at regions meeting its Z-drop criteria indicating punctuated sample divergence from the
+reference. Note that due to this joining step, the 'split read index' shown in the portello `PS` tag output refers to
+the index of the joined split alignment segments.
+
 ### Read alignment scan
 
 Read alignments are scanned for primary alignments only. Unlike the contig alignments, portello requires that these

@@ -114,22 +114,47 @@ may represent population-specific and large insertion sequences.
 
 ## Secondary analysis on portello remapped output
 
-Portello remapped read output has been tested on DeepVariant and some other secondary analysis tools designed for conventional
-pbmm2-mapped BAM inputs. Results generally seem very good, but note the following suggestions:
+Portello remapped read output has been tested on DeepVariant and some other secondary analysis tools designed for
+conventional pbmm2-mapped BAM inputs. Results generally seem very good. DeepVariant, run with current best-practice
+models for conventionally mapped BAM inputs, typically shows slightly higher accuracy on portello BAMs. Although the
+primary benefits of assembly-based liftover are for structural variants and larger-scale events rather than small
+variant calling, this DeepVariant performance trend demonstrates that portello alignments are properly aligned in
+other contexts as well.
 
-- **Enable use of supplementary reads** - A distinguishing features of portello remapped reads is that they retain very
-high quality alignments around SVs, so supplementary reads should be used in all cases. We note that this is not the
-default setting for the current (v1.9) DeepVariant release -- enabling it yields improved small variant recall and F1
-scores.
-
-- **Interpret the PS tag with care** - The PS tag in the portello output shows which contig each read was mapped to, and
-  more specifically which split read segment of the contig it was mapped to. When visualizing portello BAMs in IGV it is
-  extremely useful to show a pseudo-phased view of the reads by grouping them on this tag. Note, however that each
-  assembly algorithm has a different approach to contig contiguity through LOH regions, so a read segment with one PS
-  tag is not equivalent to a single haplotype phase block, since it could continue through large LOH regions with
-  possible phase switching.
+Note that although we recommend viewing portello alignments in IGV with reads grouped by the `PS` tag, we recommend that
+you **Interpret the PS tag with care**. The PS tag in the portello output shows which contig each read was mapped to,
+and more specifically which split read segment of the contig it was mapped to. When visualizing portello BAMs in IGV it
+is extremely useful to show a pseudo-phased view of the reads by grouping them on this tag. Note, however that each
+assembly algorithm has a different approach to contig contiguity through LOH regions, so a read segment with one PS tag
+is not equivalent to a single haplotype phase block, since it could continue through large LOH regions with possible
+phase switching.
 
 ## Other Notes
+
+### Processing of contig alignments
+
+Assembly contig alignments are processed through two major steps prior to being used for read liftover. This may lead to some
+important differences if viewing both the contig-to-reference alignments and portello liftover read alignments together.
+
+1. Repeated match trimming
+
+In the repeated match trimming step, we identify regions of the assembly contig which have been repeated aligned to
+different parts of the genome by minimap2. For each such region, we test which instance of the repeated region alignment
+has the highest gap compressed identity and trim this segment out of all other alignments. This ensures that each base
+of the assembly contig is mapped to no more than one base in the reference genome, and therefor, that each read going
+through the liftover process preserves this same property, so long as the read-to-assembly input alignment does as well.
+When following the portello best-practice protocols for input alignments, this will be the case, since pbmm2 is the
+recommended mapper for all read-to-assembly input.
+
+2. Joining colinear segments
+
+After repeated match trimming, portello identifies adjacent split alignment segments of the assembly contigs which are
+colinear, and joins these together. Joining such segments into one continuous alignment makes it easier to view the
+alignments in IGV and recognize that the phasing relationship across the split alignment segment gap. Such gaps are
+typically created by minimap2 at regions meeting its Z-drop criteria indicating punctuated sample divergence from the
+reference. Note that due to this joining step, the 'split read index' shown in the portello `PS` tag output refers to
+the index of the joined split alignment segments.
+
 
 ### MAPQ
 
@@ -143,8 +168,8 @@ The following diagnostic tags added to the remapped read output, these are likel
 
 `PS` - This tag can be used for read grouping in IGV to create a pseudo-phased view of the alignments. It is
 `{contig_name}_split{split_alignment_no}{strand}`, where `contig_name` is the contig the read aligned to, `split
-alignment no` refers to which of that contigs split alignments the read aligned to, and `strand` is "+" or "-" for the
-contig alignments orientation to the reference.
+alignment no` refers to which of that contig's (colinear-joined) split alignment segments the read aligned to, and
+`strand` is "+" or "-" for the contig alignments orientation to the reference.
 
 `ZM` - original MAPQ of the read alignments
 

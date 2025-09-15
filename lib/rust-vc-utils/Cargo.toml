@@ -1,8 +1,8 @@
 [package]
 name = "rust-vc-utils"
-version = "0.31.0"
+version = "0.32.0"
 authors = ["Chris Saunders <csaunders@pacificbiosciences.com>"]
-description = "A library of miscellaneous variant calling utilities"
+description = "Long-read alignment and variant calling utilities"
 edition = "2024"
 license-file="LICENSE.md"
 
@@ -11,7 +11,7 @@ approx = "0.5"
 bio = "2"
 indicatif = "0.18"
 log = "0.4"
-rust-htslib = { version = "0", default-features = false }
+rust-htslib = { version = "0", default-features = false, features = ["bzip2", "lzma"] }
 rust-libbigwig = { tag = "v0.4.0", git = "https://github.com/ctsa/rust-libbigwig.git" }
 simple-error = "0.3"
 tempfile = "3"

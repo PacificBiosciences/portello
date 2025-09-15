@@ -1,6 +1,6 @@
 [package]
 name = "portello"
-version = "0.5.0"
+version = "0.6.0"
 authors = ["Chris Saunders <csaunders@pacificbiosciences.com>"]
 description = "Lifts read alignments from personal assembly to reference"
 edition = "2024"

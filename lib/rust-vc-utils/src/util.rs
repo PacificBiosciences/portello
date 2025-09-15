@@ -147,6 +147,13 @@ where
     }
 }
 
+/// Drop all true entries from vector
+pub fn drop_true<T>(vec: &mut Vec<T>, drop_list: &[bool]) {
+    assert_eq!(vec.len(), drop_list.len());
+    let mut drop = drop_list.iter();
+    vec.retain(|_| !*drop.next().unwrap())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -205,5 +212,14 @@ mod tests {
         assert_eq!(ranges.len(), 2);
         assert_eq!(ranges[0], 0..3);
         assert_eq!(ranges[1], 4..10);
+    }
+
+    #[test]
+    fn test_drop_true() {
+        let mut v = vec![1, 2, 3, 4, 5];
+        let p = vec![true, false, false, true, false];
+
+        drop_true(&mut v, &p);
+        assert_eq!(v, vec![2, 3, 5]);
     }
 }

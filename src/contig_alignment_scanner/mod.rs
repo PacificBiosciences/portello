@@ -1,4 +1,6 @@
+mod contig_colinear_segment_joiner;
 mod contig_repeated_match_trimmer;
+mod non_targeted_segment_filter;
 
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -15,11 +17,17 @@ use rust_vc_utils::{
 };
 use unwrap::unwrap;
 
+use self::contig_colinear_segment_joiner::join_colinear_contig_segments;
 use self::contig_repeated_match_trimmer::clip_repeated_contig_matches;
+use self::non_targeted_segment_filter::filter_non_targeted_segments;
 use crate::worker_thread_data::{BamReaderWorkerThreadDataSet, get_bam_reader_worker_thread_data};
 
 pub struct ContigMappingSegmentInfo {
     pub seq_order_segment: SeqOrderSplitReadSegment,
+
+    /// Data structure derived from the contig split segment location and cigar string, used to quickly remap reads onto
+    /// the contig split segment mapping to reference:
+    ///
     pub contig_to_ref_map: ReadToRefTreeMap,
 }
 
@@ -47,6 +55,8 @@ struct SplitReadKey {
     pub trailing_cigar_clip: u32,
 }
 
+type SuppCigarMap = BTreeMap<SplitReadKey, (CigarString, ReadToRefTreeMap)>;
+
 /// All data pertaining to a contig accumulated during the bam scan
 ///
 #[derive(Default)]
@@ -54,7 +64,7 @@ struct ContigCell {
     pub contig_mapping_info: Option<ContigMappingInfo>,
 
     /// Accurate cigar strings taken directly from the split read alignments
-    pub supp_cigars: BTreeMap<SplitReadKey, (CigarString, ReadToRefTreeMap)>,
+    pub supp_cigars: SuppCigarMap,
 }
 
 type ParallelContigCell = Arc<Mutex<ContigCell>>;
@@ -64,6 +74,113 @@ type ParallelContigCell = Arc<Mutex<ContigCell>>;
 /// The outer vector is ordered by assembly contig index
 ///
 pub type AllContigMappingInfo = Vec<ContigMappingInfo>;
+
+pub fn print_split_read_summary(contig_mapping_info: &ContigMappingInfo) {
+    eprintln!("contig '{}' split read summary:", contig_mapping_info.qname);
+    for (i, x) in contig_mapping_info
+        .ordered_contig_segment_info
+        .iter()
+        .enumerate()
+    {
+        eprintln!("split {i}: {}", x.seq_order_segment.short_display());
+    }
+}
+
+/// Use the primary read for each contig to create the core contig_mapping_info structure
+///
+fn add_primary_read(ref_chrom_list: &ChromList, record: &bam::Record) -> ContigMappingInfo {
+    let ordered_contig_segments = get_seq_order_read_split_segments(ref_chrom_list, record);
+
+    let ordered_contig_segment_info = ordered_contig_segments
+        .into_iter()
+        .map(|seq_order_segment| {
+            let contig_to_ref_map = if seq_order_segment.from_primary_bam_record {
+                get_read_segment_to_ref_pos_tree_map(
+                    seq_order_segment.pos,
+                    &seq_order_segment.cigar,
+                    false,
+                )
+            } else {
+                Default::default()
+            };
+            ContigMappingSegmentInfo {
+                seq_order_segment,
+                contig_to_ref_map,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let need_rev_contig_seq = ordered_contig_segment_info
+        .iter()
+        .any(|x| !x.seq_order_segment.is_fwd_strand);
+
+    let rev_contig_seq = if need_rev_contig_seq {
+        let mut rev_seq = record.seq().as_bytes();
+        if !record.is_reverse() {
+            rev_comp_in_place(&mut rev_seq);
+        }
+        Some(rev_seq)
+    } else {
+        None
+    };
+
+    let qname = std::str::from_utf8(record.qname()).unwrap().to_string();
+    ContigMappingInfo {
+        qname,
+        ordered_contig_segment_info,
+        rev_contig_seq,
+    }
+}
+
+fn add_split_read_cigar_to_supp_cigar_set(
+    ref_chrom_list: &ChromList,
+    parallel_contig_data: &[ParallelContigCell],
+    record: &bam::Record,
+    contig_id: usize,
+) {
+    let split_read_key = {
+        let (leading_cigar_clip, trailing_cigar_clip) = {
+            let ignore_hard_clip = false;
+            let cigar_vec = &record.cigar().0;
+            let (read_start, read_end, read_size) =
+                get_read_clip_positions(cigar_vec, ignore_hard_clip);
+            (read_start as u32, (read_size - read_end) as u32)
+        };
+        SplitReadKey {
+            chrom_index: record.tid() as usize,
+            pos: record.pos(),
+            is_fwd_strand: !record.is_reverse(),
+            leading_cigar_clip,
+            trailing_cigar_clip,
+        }
+    };
+    let read_to_ref_tree_map =
+        get_read_segment_to_ref_pos_tree_map(record.pos(), &record.cigar(), false);
+    let ret = parallel_contig_data[contig_id]
+        .lock()
+        .unwrap()
+        .supp_cigars
+        .insert(
+            split_read_key,
+            (record.cigar().take(), read_to_ref_tree_map),
+        );
+
+    if let Some((old_cigar, _)) = ret {
+        let qname = std::str::from_utf8(record.qname()).unwrap().to_string();
+        eprintln!("Can't uniquely identify split read alignment info in contig '{qname}'");
+        let ref_chrom_name = &ref_chrom_list.data[record.tid() as usize].label;
+        eprintln!(
+            "trying to insert split read at tid: {} chrom: {} pos: {} fwd_strand: {} cigar: {}",
+            record.tid(),
+            ref_chrom_name,
+            record.pos(),
+            !record.is_reverse(),
+            record.cigar()
+        );
+        eprintln!("old insert cigar string: {old_cigar}");
+        panic!("Can't uniquely identify split read alignment info in contig '{qname}'");
+    }
+}
 
 #[allow(clippy::too_many_arguments)]
 fn scan_chromosome_segment(
@@ -92,7 +209,7 @@ fn scan_chromosome_segment(
             continue;
         }
 
-        // Requiring the contig to start in the worker region prevents double entries (when running in WGS mode).
+        // Requiring the contig to start in the worker region prevents double entries
         //
         let contig_starts_in_worker_region = worker_region.intersect_pos(record.pos());
         if !contig_starts_in_worker_region {
@@ -103,93 +220,18 @@ fn scan_chromosome_segment(
             assembly_contig_list.label_to_index[std::str::from_utf8(record.qname()).unwrap()];
 
         if !record.is_supplementary() {
-            let ordered_contig_segments =
-                get_seq_order_read_split_segments(ref_chrom_list, &record);
-
-            let ordered_contig_segment_info = ordered_contig_segments
-                .into_iter()
-                .map(|seq_order_segment| {
-                    let contig_to_ref_map = if seq_order_segment.from_primary_bam_record {
-                        get_read_segment_to_ref_pos_tree_map(
-                            seq_order_segment.pos,
-                            &seq_order_segment.cigar,
-                            false,
-                        )
-                    } else {
-                        Default::default()
-                    };
-                    ContigMappingSegmentInfo {
-                        seq_order_segment,
-                        contig_to_ref_map,
-                    }
-                })
-                .collect::<Vec<_>>();
-
-            let need_rev_contig_seq = ordered_contig_segment_info
-                .iter()
-                .any(|x| !x.seq_order_segment.is_fwd_strand);
-
-            let rev_contig_seq = if need_rev_contig_seq {
-                let mut rev_seq = record.seq().as_bytes();
-                if !record.is_reverse() {
-                    rev_comp_in_place(&mut rev_seq);
-                }
-                Some(rev_seq)
-            } else {
-                None
-            };
-
-            let qname = std::str::from_utf8(record.qname()).unwrap().to_string();
-            let contig_mapping_info = ContigMappingInfo {
-                qname,
-                ordered_contig_segment_info,
-                rev_contig_seq,
-            };
-
+            let contig_mapping_info = add_primary_read(ref_chrom_list, &record);
             parallel_contig_data[contig_id]
                 .lock()
                 .unwrap()
                 .contig_mapping_info = Some(contig_mapping_info);
         } else {
-            let zip = {
-                let (leading_cigar_clip, trailing_cigar_clip) = {
-                    let ignore_hard_clip = false;
-                    let cigar_vec = &record.cigar().0;
-                    let (read_start, read_end, read_size) =
-                        get_read_clip_positions(cigar_vec, ignore_hard_clip);
-                    (read_start as u32, (read_size - read_end) as u32)
-                };
-                SplitReadKey {
-                    chrom_index: record.tid() as usize,
-                    pos: record.pos(),
-                    is_fwd_strand: !record.is_reverse(),
-                    leading_cigar_clip,
-                    trailing_cigar_clip,
-                }
-            };
-            let read_to_ref_tree_map =
-                get_read_segment_to_ref_pos_tree_map(record.pos(), &record.cigar(), false);
-            let ret = parallel_contig_data[contig_id]
-                .lock()
-                .unwrap()
-                .supp_cigars
-                .insert(zip, (record.cigar().take(), read_to_ref_tree_map));
-
-            if let Some((old_cigar, _)) = ret {
-                let qname = std::str::from_utf8(record.qname()).unwrap().to_string();
-                eprintln!("Can't uniquely identify split read alignment info in contig '{qname}'");
-                let ref_chrom_name = &ref_chrom_list.data[record.tid() as usize].label;
-                eprintln!(
-                    "trying to insert split read at tid: {} chrom: {} pos: {} fwd_strand: {} cigar: {}",
-                    record.tid(),
-                    ref_chrom_name,
-                    record.pos(),
-                    !record.is_reverse(),
-                    record.cigar()
-                );
-                eprintln!("old insert cigar string: {old_cigar}");
-                panic!("Can't uniquely identify split read alignment info in contig '{qname}'");
-            }
+            add_split_read_cigar_to_supp_cigar_set(
+                ref_chrom_list,
+                parallel_contig_data,
+                &record,
+                contig_id,
+            );
         }
     }
 
@@ -206,13 +248,9 @@ fn scan_chromosome_segments(
     chrom_index: usize,
     chrom_size: u64,
     parallel_contig_data: &[ParallelContigCell],
-    target_region: Option<&GenomeSegment>,
     progress_reporter: &ProgressReporter,
 ) {
-    let (target_region_offset, target_region_size) = match target_region {
-        Some(x) => (x.range.start as u64, x.range.size() as u64),
-        None => (0u64, chrom_size),
-    };
+    let (target_region_offset, target_region_size) = (0u64, chrom_size);
 
     let target_region_segments = get_region_segments_with_offset(
         target_region_offset,
@@ -284,7 +322,9 @@ pub fn scan_contig_bam(
 
     let progress_reporter = &progress_reporter;
 
-    // Create array of contig results to be shared across all threads, the array is fixed size and each element has it's own lock:
+    // Create array of contig results to be shared across all threads, the array is fixed size and each element has its
+    // own lock to minimize contention. The locks are still needed for the case where different split read entries for the
+    // same contig are being processed by different threads.
     let contig_count = assembly_contig_list.data.len();
     let parallel_contig_data =
         std::iter::repeat_with(|| Arc::new(Mutex::new(ContigCell::default())))
@@ -292,21 +332,10 @@ pub fn scan_contig_bam(
             .collect::<Vec<_>>();
     let parallel_contig_data_ref = &parallel_contig_data;
 
-    // We make 2 passes on the contig file to work around the minimap2 SA format, wherein the split read cigar strings minimap writes out
-    // are appoximations, which we must fill in form supplementary reads.
-    //
-
-    // Pass 1 - gather data from primary reads
     worker_pool.scope(move |scope| {
         for chrom_index in 0..chrom_count {
             let chrom_info = &ref_chrom_list.data[chrom_index];
             let chrom_size = chrom_info.length;
-
-            if let Some(target_region) = target_region
-                && chrom_index != target_region.chrom_index
-            {
-                continue;
-            }
 
             let worker_thread_dataset = worker_thread_dataset.clone();
             scope.spawn(move |_| {
@@ -318,7 +347,6 @@ pub fn scan_contig_bam(
                     chrom_index,
                     chrom_size,
                     parallel_contig_data_ref,
-                    target_region,
                     progress_reporter,
                 );
             });
@@ -344,7 +372,7 @@ pub fn scan_contig_bam(
                 .iter_mut()
                 .filter(|x| !x.seq_order_segment.from_primary_bam_record)
             {
-                let zip = {
+                let split_read_key = {
                     let (leading_cigar_clip, trailing_cigar_clip) = {
                         let ignore_hard_clip = false;
                         let cigar_vec = &contig_segment.seq_order_segment.cigar.0;
@@ -360,7 +388,7 @@ pub fn scan_contig_bam(
                     }
                 };
 
-                match ulx.supp_cigars.get(&zip) {
+                match ulx.supp_cigars.get(&split_read_key) {
                     Some(x) => {
                         contig_segment.seq_order_segment.cigar = x.0.clone();
                         contig_segment.contig_to_ref_map = x.1.clone();
@@ -377,9 +405,9 @@ pub fn scan_contig_bam(
                                 missing_supplementary_match_count += 1;
                                 contigs_with_missing_supp_match_count.insert(contig_name.to_string());
                             } else {
-                                let chrom_name = &ref_chrom_list.data[zip.chrom_index].label;
+                                let chrom_name = &ref_chrom_list.data[split_read_key.chrom_index].label;
                                 eprintln!("Can't find supplementary alignment record corresponding to segment reported in SA tag for contig '{contig_name}'");
-                                eprintln!("Missing segment maps to tid: {} chrom: {chrom_name} pos: {} fwd_strand?: {}", zip.chrom_index, zip.pos, zip.is_fwd_strand);
+                                eprintln!("Missing segment maps to tid: {} chrom: {chrom_name} pos: {} fwd_strand?: {}", split_read_key.chrom_index, split_read_key.pos, split_read_key.is_fwd_strand);
                                 missing_match_failure = true;
                             }
                         }
@@ -418,7 +446,14 @@ pub fn scan_contig_bam(
         );
     }
 
+    // The strategy for target region is to ignore it for the geneome scan, but then filter out any read segments that
+    // are not targetted here.
+    //
+    filter_non_targeted_segments(target_region, &mut result);
+
     clip_repeated_contig_matches(&mut result);
+
+    join_colinear_contig_segments(&mut result);
 
     result
 }

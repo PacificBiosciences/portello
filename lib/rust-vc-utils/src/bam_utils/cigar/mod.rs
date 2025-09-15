@@ -11,6 +11,12 @@ pub use shift_indels::*;
 
 use rust_htslib::bam::record::{self, Cigar};
 
+/// Is the cigar element any clip type?
+///
+pub fn is_clip(c: &Cigar) -> bool {
+    matches!(c, Cigar::SoftClip(_) | Cigar::HardClip(_))
+}
+
 /// Is the cigar element any of the alignment match types?
 ///
 pub fn is_alignment_match(c: &Cigar) -> bool {
@@ -72,8 +78,8 @@ pub fn update_ref_and_read_pos(
 }
 
 /// Report the following positions in read coordinates:
-/// 1. The first position after all left-side clipping
-/// 2. The first position of all right-side clipping
+/// 1. The first position after all left-side clipping (in read coordinates)
+/// 2. The first position of all right-side clipping (in read coordaintes)
 /// 3. The read length
 ///
 pub fn get_read_clip_positions(cigar: &[Cigar], ignore_hard_clip: bool) -> (usize, usize, usize) {
@@ -290,6 +296,36 @@ pub fn has_aligned_segments(cigar: &[Cigar]) -> bool {
     cigar.iter().any(is_alignment_match)
 }
 
+/// Remove all leading soft/hard clipping from the cigar
+pub fn strip_leading_clip(cigar: &mut Vec<Cigar>) {
+    let mut non_clip_found = false;
+    cigar.retain(|x| {
+        if non_clip_found {
+            true
+        } else if is_clip(x) {
+            false
+        } else {
+            non_clip_found = true;
+            true
+        }
+    });
+}
+
+/// Remove all trailing soft/hard clipping from the cigar
+pub fn strip_trailing_clip(cigar: &mut Vec<Cigar>) {
+    let mut non_clip_found = false;
+    cigar.retain(|x| {
+        if non_clip_found {
+            !is_clip(x)
+        } else {
+            if !is_clip(x) {
+                non_clip_found = true;
+            }
+            true
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -484,5 +520,45 @@ mod tests {
 
         let cigar = vec![Match(2)];
         assert!(has_aligned_segments(&cigar));
+    }
+
+    #[test]
+    fn test_strip_leading_clip() {
+        use Cigar::*;
+        let mut cigar = vec![
+            HardClip(2),
+            SoftClip(2),
+            Match(2),
+            Ins(2),
+            Match(2),
+            SoftClip(2),
+            HardClip(2),
+        ];
+
+        strip_leading_clip(&mut cigar);
+        assert_eq!(
+            cigar,
+            vec![Match(2), Ins(2), Match(2), SoftClip(2), HardClip(2),]
+        );
+    }
+
+    #[test]
+    fn test_strip_trailing_clip() {
+        use Cigar::*;
+        let mut cigar = vec![
+            HardClip(2),
+            SoftClip(2),
+            Match(2),
+            Ins(2),
+            Match(2),
+            SoftClip(2),
+            HardClip(2),
+        ];
+
+        strip_trailing_clip(&mut cigar);
+        assert_eq!(
+            cigar,
+            vec![HardClip(2), SoftClip(2), Match(2), Ins(2), Match(2),]
+        );
     }
 }

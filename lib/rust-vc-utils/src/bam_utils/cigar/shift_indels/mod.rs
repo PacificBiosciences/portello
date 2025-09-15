@@ -158,17 +158,17 @@ mod tests {
     #[test]
     fn test_shift_alignment_indel_cluster() {
         let ref_pos = 2;
-        let cigar = vec![Match(4), Ins(2), Del(2), Match(1)];
+        let cigar = vec![Match(4), Del(2), Ins(2), Match(1)];
         let ref_seq = b"XXABBBABFXX";
         let read_seq = b"ABBBBBF";
 
         let (shift_ref_pos, shift_cigar) = left_shift_indels(ref_pos, &cigar, ref_seq, read_seq);
         assert_eq!(shift_ref_pos, ref_pos);
-        assert_eq!(shift_cigar, vec![Match(3), Del(2), Ins(2), Match(2)]);
+        assert_eq!(shift_cigar, vec![Match(3), Ins(2), Del(2), Match(2)]);
 
-        let cigar = vec![Match(3), Ins(2), Del(2), Match(2)];
+        let cigar = vec![Match(3), Del(2), Ins(2), Match(2)];
         let (shift_ref_pos, shift_cigar) = right_shift_indels(ref_pos, &cigar, ref_seq, read_seq);
         assert_eq!(shift_ref_pos, ref_pos);
-        assert_eq!(shift_cigar, vec![Match(4), Del(2), Ins(2), Match(1)]);
+        assert_eq!(shift_cigar, vec![Match(4), Ins(2), Del(2), Match(1)]);
     }
 }

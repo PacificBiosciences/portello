@@ -137,11 +137,12 @@ impl<'a> CigarShiftBuilder<'a> {
         }
         self.match_block_size = actual_shift_len;
 
-        if self.dir == ShiftDirection::Right {
+        // Arrange order so that combined insertion/deletion events will always be output in "nImD" format
+        if self.dir == ShiftDirection::Left {
             self.push_ins_segment();
         }
         self.push_del_segment();
-        if self.dir == ShiftDirection::Left {
+        if self.dir == ShiftDirection::Right {
             self.push_ins_segment();
         }
     }

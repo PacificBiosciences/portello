@@ -99,8 +99,8 @@ impl CigarBlockInfo {
                     };
 
                     rpush(Cigar::Match(pre_match_len));
-                    rpush(Cigar::Del(del_len));
                     rpush(Cigar::Ins(ins_len));
+                    rpush(Cigar::Del(del_len));
                     rpush(Cigar::Match(post_match_len));
                 }
             }
@@ -114,7 +114,7 @@ impl CigarBlockInfo {
 /// For any complex cluster of multiple indel (ID) types in the cigar:
 /// 1. See if any amount of insertion and deletion can be traded off to reduce total edit distance
 /// 2. See if size of indel elements can be reduced.
-/// 3. If simplification to one type is not possible, then standardize remaining cases to "nDmI"
+/// 3. If simplification to one type is not possible, then standardize remaining cases to "nImD"
 ///
 pub fn simplify_alignment_indels(
     ref_pos: i64,
@@ -208,7 +208,7 @@ mod tests {
         {
             // Boring InDel
             let ref_pos = 2;
-            let cigar = vec![Match(2), Ins(2), Del(2), Match(3)];
+            let cigar = vec![Match(2), Del(2), Ins(2), Match(3)];
             let ref_seq = b"XXABCCCDEXX";
             let read_seq = b"ABBBCDE";
 
@@ -216,7 +216,7 @@ mod tests {
                 simplify_alignment_indels(ref_pos, &cigar, ref_seq, read_seq);
 
             assert_eq!(simple_ref_pos, ref_pos);
-            assert_eq!(simple_cigar, vec![Match(2), Del(2), Ins(2), Match(3)]);
+            assert_eq!(simple_cigar, vec![Match(2), Ins(2), Del(2), Match(3)]);
         }
 
         {
@@ -240,7 +240,7 @@ mod tests {
             // Left-side Consolidation
             //
             let ref_pos = 2;
-            let cigar = vec![Match(3), Ins(3), Del(3), Match(1)];
+            let cigar = vec![Match(3), Del(3), Ins(3), Match(1)];
             let ref_seq = b"XXABCCCDEXX";
             let read_seq = b"ABCCXXE";
 
@@ -248,7 +248,7 @@ mod tests {
                 simplify_alignment_indels(ref_pos, &cigar, ref_seq, read_seq);
 
             assert_eq!(simple_ref_pos, ref_pos);
-            assert_eq!(simple_cigar, vec![Match(4), Del(2), Ins(2), Match(1)]);
+            assert_eq!(simple_cigar, vec![Match(4), Ins(2), Del(2), Match(1)]);
         }
     }
 }

@@ -2,7 +2,7 @@ use rust_htslib::bam::record::{CigarString, Record};
 
 use super::aux::get_optional_string_aux_tag;
 use super::aux::sa_tag_parser::parse_sa_aux_val;
-use super::cigar::{get_read_clip_positions, has_aligned_segments};
+use super::cigar::{get_cigar_ref_offset, get_read_clip_positions, has_aligned_segments};
 use crate::ChromList;
 
 /// Object summarizing information for a single segment of a split read alignment
@@ -29,6 +29,23 @@ pub struct SeqOrderSplitReadSegment {
     ///
     /// All split segments found from SA tags in this bam record should be false
     pub from_primary_bam_record: bool,
+}
+
+impl SeqOrderSplitReadSegment {
+    /// The derived Debug output can be dominated by the Cigar output, so provide a more compact display option
+    pub fn short_display(&self) -> String {
+        let end = self.pos + get_cigar_ref_offset(&self.cigar);
+        format!(
+            "seq_order_read_start/end: {}/{} ref_segment: {}:{}-{} fwd: {} mapq: {}",
+            self.seq_order_read_start,
+            self.seq_order_read_end,
+            self.chrom_index,
+            self.pos,
+            end,
+            self.is_fwd_strand,
+            self.mapq
+        )
+    }
 }
 
 /// Parse all primary- and split-read segments bam record, and order segments in the read sequencing order

@@ -7,7 +7,7 @@ mod read_alignment_scanner;
 mod simplify_alignment_indels;
 mod worker_thread_data;
 
-use std::{error, process};
+use std::process;
 
 use hhmmss::Hhmmss;
 use log::info;
@@ -19,10 +19,52 @@ use crate::globals::{PROGRAM_NAME, PROGRAM_VERSION};
 use crate::logger::setup_logger;
 use crate::read_alignment_scanner::scan_and_remap_reads;
 
+/// Load reference seqeunce from fasta, stored as an array in ref_chrom_list order
+///
+fn get_chrom_array(ref_filename: &str, ref_chrom_list: &ChromList) -> Vec<Vec<u8>> {
+    let mut genome_ref = get_genome_ref_from_fasta(ref_filename);
+
+    // For each chrom listed in the asssembly-to-ref bam index, check that it is found in genome_ref,
+    // and transfer the chrom sequence from genome_ref to a chrom array
+    //
+    let mut r = Vec::new();
+    let mut reference_consistency_error = false;
+    for chrom_info in ref_chrom_list.data.iter() {
+        let chrom_label = &chrom_info.label;
+        let chrom_len = chrom_info.length;
+        match genome_ref.chroms.remove(chrom_label) {
+            Some(x) => {
+                if x.len() != chrom_len as usize {
+                    log::error!(
+                        "Chromosome \"{chrom_label}\" specified with inconsistent length: {chrom_len} in the assembly-to-ref alignment file, and {} in the reference fasta",
+                        x.len()
+                    );
+                    reference_consistency_error = true;
+                } else {
+                    r.push(x);
+                }
+            }
+            None => {
+                log::error!(
+                    "Chromosome \"{chrom_label}\" specified in the assembly-to-ref alignment file, but not in the reference fasta"
+                );
+                reference_consistency_error = true;
+            }
+        };
+    }
+
+    if reference_consistency_error {
+        log::error!("Exiting due to one or more reference consistency issues");
+        std::process::exit(exitcode::DATAERR);
+    }
+
+    r
+}
+
 fn run(
     settings: &Settings,
     derived_settings: &DerivedSettings,
-) -> Result<(), Box<dyn error::Error>> {
+) -> Result<(), Box<dyn std::error::Error>> {
     info!("Starting {PROGRAM_NAME} {PROGRAM_VERSION}");
     info!(
         "cmdline: {}",
@@ -40,16 +82,7 @@ fn run(
         .as_ref()
         .map(|x| GenomeSegment::from_region_str(&ref_chrom_list, x));
 
-    // Load reference sequence but move it from chrom name hash to chrom index lookup array:
-    let reference = {
-        let mut r = get_genome_ref_from_fasta(settings.ref_filename.as_str())
-            .chroms
-            .into_iter()
-            .map(|(label, val)| (*ref_chrom_list.label_to_index.get(&label).unwrap(), val))
-            .collect::<Vec<_>>();
-        r.sort_by_key(|(x, _)| *x);
-        r.into_iter().map(|(_, x)| x).collect::<Vec<_>>()
-    };
+    let reference = get_chrom_array(settings.ref_filename.as_str(), &ref_chrom_list);
 
     let all_contig_mapping_info = scan_contig_bam(
         &settings.assembly_to_ref_bam,

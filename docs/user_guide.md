@@ -9,10 +9,10 @@ Portello is a method to liftover reads from sample assembly to reference
 
 The expected workflow to use it is:
 - Run diploid assembly on sample reads
-- Consolidate all assembly contigs (from both haplotypes) to fasta
-- Align sample reads directly to consolidated assembly contigs using pbmm2
+- Consolidate haplotype-resolved assembly contigs from both haplotypes to a single fasta
 - Align assembly contigs to standard reference (e.g. GRCh38) using minimap2
-- Run portello on the two mapping outputs to lift sample read mappings to the standard reference.
+- Align sample reads directly to consolidated assembly contigs using pbmm2
+- Run portello on the above two alignment outputs to lift sample read mappings from the assembly to the reference.
 
 ## Usage Example:
 
@@ -35,7 +35,7 @@ portello \
   --assembly-to-ref $asm_to_ref_bam \
   --read-to-assembly $read_to_asm_bam \
   --remapped-read-output - \
-  --unassembled-read-output unassembled_read.bam |\
+  --unassembled-read-output unassembled.bam |\
 samtools sort -@$threads - --write-index -o remapped.sort.bam
 ```
 
@@ -45,15 +45,22 @@ below for details of the `PS` tag string.
 
 ## Inputs
 
-Best practice and expectations for input alignment files are provided below. Note that secondary reads in either input
-file will be ignored. It is assumed that both input files have alignments with left-shifted indels. Portello will
-take steps to preserve this left-shifting in the remapped output.
+Requirements and best practice for generation of the two input alignment files used by portello are provided below.
+
+### Diploid assembly
+
+Haplotype specific contigs from a diploid assembler are required as a first step to generate portello inputs. These
+contigs can be either partially-phased/dual-assembly haplotypes or fully-phased haplotypes from a process such as
+trio-binning. Portello has been tested with such inputs from both [hifiasm](https://github.com/chhylp123/hifiasm) and
+[verkko](https://github.com/marbl/verkko).
+
+For either assembler, the contigs for each haplotype should be extracted to fasta format, and the two sets of
+haplotype specific contigs should be concatenated into a single fasta for use in the alignment steps below.
 
 ### Read-to-assembly alignments
 
-For the read-to-assembly alignment input, all sequencing reads should be mapped to a reference genome comprised of all
-high-quality assembly contigs for the given sample. Portello is designed and tested for diploid assemblies, so for this
-case the contigs from both haplotypes should be concatenated together as the reference sequence.
+For the read-to-assembly alignment input, all sequencing reads should be mapped to the concatenated diploid assembly
+haplotypes (see [diploid assembly](#diploid-assembly) section above).
 
 The read-to-assembly alignment must be from pbmm2 so that portello can process the split read alignments correctly (in
 particular the 'compressed' CIGAR strings in minimap2's `SA` tag output cannot be used).
@@ -77,16 +84,24 @@ minimap2 \
   -x asm5 \
   -R "@RG\tID:HG002_hifiasm\tSM:HG002" \
   $ref \
-  $reads |\
+  $contigs |\
 samtools sort -@$threads - --write-index -O BAM -o HG002.asm.GRCh38.bam
 ```
 
-This strategy uses the `asm5` minimap2 preset to map sample-specific assembly contigs to the reference, which should be
-a good choice for human sample analysis. Note that the `--eqx` option to provide CIGAR strings with `=` and `X` match
-values is required.
+Here, `$contigs` should be the concatenated diploid assembly haplotypes for the sample (see [diploid
+assembly](#diploid-assembly) section above).
+
+The example uses the `asm5` minimap2 preset to map the assembly contigs to the reference. This is the recommended
+setting for human sample analysis. Note that the `--eqx` option to provide CIGAR strings with `=` and `X` match values
+is required.
 
 The common additional minimap2 options `--cs` and `-Y` add more information to the alignments that portello doesn't use.
 These won't help or hurt the process.
+
+### Additional input alignment notes
+
+For both input alignments, secondary reads will be ignored. It is assumed that both input files have alignments with
+left-shifted indels. Portello will take steps to preserve this left-shifting in the remapped output.
 
 ## Outputs
 

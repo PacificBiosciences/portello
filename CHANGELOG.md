@@ -1,5 +1,9 @@
 # Change Log
 
+## v0.6.1 - 2025-12-16
+
+- Fix error message to describe chromosome consistency issues between assembly-to-ref alignments and the reference fasta [PacificBiosciences/portello#1]
+
 ## v0.6.0 - 2025-09-15
 
 - CR-532 Join colinear contig alignments

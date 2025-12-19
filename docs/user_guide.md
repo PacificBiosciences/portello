@@ -1,5 +1,13 @@
 # Portello user guide
 
+## Table of Contents
+
+* [Overview](#overview)
+* [Getting started](#getting-started)
+* [Inputs](#inputs)
+* [Outputs](#outputs)
+* [Other Notes](#other-notes)
+
 ## Overview
 
 Portello is a method to liftover reads from sample assembly to reference
@@ -14,7 +22,36 @@ The expected workflow to use it is:
 - Align sample reads directly to consolidated assembly contigs using pbmm2
 - Run portello on the above two alignment outputs to lift sample read mappings from the assembly to the reference.
 
-## Usage Example:
+## Getting Started
+
+### Installation
+
+Portello binaries are available for 64-bit Linux platforms. These can be installed either directly from the GitHub
+release tarball, or via conda as described below.
+
+#### Install from GitHub
+
+To install portello from github, download the latest release tarball compiled for 64-bit Linux on the [github release
+channel](https://github.com/PacificBiosciences/portello/releases/latest), then unpack the tar file. Using v0.6.1 as an
+example, the tar file can be downloaded and unpacked as follows:
+
+    wget https://github.com/PacificBiosciences/portello/releases/download/v0.6.1/portello-v0.6.1-x86_64-unknown-linux-gnu.tar.gz
+    tar -xzf portello-v0.6.1-x86_64-unknown-linux-gnu.tar.gz
+
+The portello binary is found in the `bin/` directory of the unpacked file distribution. This can be run with the help
+option to test the binary and review latest usage details:
+
+    portello-v0.6.1-x86_64-unknown-linux-gnu/bin/portello --help
+
+#### Install from conda
+
+For [conda](https://github.com/conda/conda) users, installing portello on conda may be a more convenient option. Portello
+is available for conda on Linux from the `bioconda` channel. A new conda environment with the latest portello release can
+be created as follows:
+
+    conda create -n portello -c bioconda portello
+
+### Usage Example
 
 Portello requires a reference genome and two alignment file inputs:
 1. Assembly contig to reference alignments
@@ -169,7 +206,6 @@ alignments in IGV and recognize that the phasing relationship across the split a
 typically created by minimap2 at regions meeting its Z-drop criteria indicating punctuated sample divergence from the
 reference. Note that due to this joining step, the 'split read index' shown in the portello `PS` tag output refers to
 the index of the joined split alignment segments.
-
 
 ### MAPQ
 

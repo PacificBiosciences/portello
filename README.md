@@ -1,19 +1,30 @@
-# Portello
+<h1 align="center"><img width="250px" src="img/logo.svg"/></h1>
 
-Portello is a method to liftover reads from sample assembly to reference
+<h1 align="center">Portello</h1>
 
-- Reads are lifted **from** their mapping to the denovo-assembly contigs for the sample (it is assumed that the contigs were assembled from this same set of reads).
+<h4 align="center">Method to transfer HiFi read mappings from de novo assembly to reference</h4>
 
-- Reads are lifted **to** a standard reference genome, like GRCh38.
+De novo assembly of HiFi long reads is a powerful approach to human rare-disease analysis, especially given rare
+variants that may be highly diverged from reference assemblies. However, integrating global assembly into a practical
+rare-disease analysis workflow faces challenges relative to traditional read mapping approaches. These include:
+- small variant accuracy
+- somatic variation
+- methylation
+- assessment of assembly error/compression
+- annotation
 
-Example IGV view showing portello liftover mappings vs standard pbmm2 mappings from the same set of reads:
+Portello provides a simple means to reduce these challenges, by transferring HiFi read mappings from their own assembly
+contigs back onto an annotated reference assembly.
+
+Shown below is an example IGV view of portello-transferred mappings (top) from hifiasm assembly contigs vs. standard
+pbmm2 mappings (bottom) from the same set of HiFi reads:
 
 <p align="center">
   <img src="img/portello_igv_example.png" width="80%" />
 </p>
 
-The example image show portello alignments (top) vs. pbmm2 (bottom) for the same set of HG002 HiFi reads at region `chr4:40,294,833-40,295,706`, the portello
-reads are grouped by the `PS` tag to cluster them by their associated assembly contig, to create a phased-like view of the liftover output.
+The IGV view spans GRCh38 region `chr4:40,294,833-40,295,706`, the portello
+reads are grouped by their associated assembly contig, to create a phased-like view of the reads.
 
 ## Getting started
 

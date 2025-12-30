@@ -1,7 +1,7 @@
 //! Alignment clipping facilities for read or ref based clip sizes
 //!
 
-use super::{compress_cigar, update_ref_and_read_pos};
+use super::{compress_cigar, update_ref_and_read_pos, update_ref_pos};
 use rust_htslib::bam::record::Cigar;
 
 /// Modify a cigar string so that the read is soft-clipped on the left side to achieve at least the specified reference
@@ -15,10 +15,7 @@ use rust_htslib::bam::record::Cigar;
 pub fn clip_alignment_ref_start(cigar_in: &[Cigar], min_left_ref_clip: i64) -> (Vec<Cigar>, i64) {
     use Cigar::*;
 
-    let ignore_hard_clip = false;
-
     let mut ref_pos = 0;
-    let mut read_pos = 0;
 
     let mut cigar_out = Vec::new();
     let mut left_ref_clip_shift = 0;
@@ -62,7 +59,7 @@ pub fn clip_alignment_ref_start(cigar_in: &[Cigar], min_left_ref_clip: i64) -> (
                 cigar_out.push(*c);
             }
         };
-        update_ref_and_read_pos(c, &mut ref_pos, &mut read_pos, ignore_hard_clip);
+        update_ref_pos(c, &mut ref_pos);
     }
     (cigar_out, left_ref_clip_shift)
 }

@@ -9,9 +9,20 @@ use unwrap::unwrap;
 pub struct GenomeRef {
     /// A map from chrom name to chrom sequence
     pub chroms: HashMap<String, Vec<u8>>,
+
+    /// Chromosome order implied by the reference source file
+    ///
+    /// This may not be the chromosome order used in analysis.
+    pub chrom_input_order: Vec<String>,
 }
 
 impl GenomeRef {
+    pub fn insert_chrom(&mut self, label: &str, seq: Vec<u8>) {
+        self.chroms.insert(label.to_string(), seq);
+
+        self.chrom_input_order.push(label.to_string());
+    }
+
     /// Scan all GenomeRef seqeunces and convert any characters not in the allowed list to the unknown character
     ///
     pub fn convert_disallowed_characters(&mut self, allowed: &[u8], unknown: u8) {
@@ -48,9 +59,7 @@ pub fn get_genome_ref_from_fasta_fp(file: File) -> GenomeRef {
     for result in reader.records() {
         let record = result.expect("Error during fasta record parsing");
 
-        genome_ref
-            .chroms
-            .insert(record.id().to_string(), record.seq().to_ascii_uppercase());
+        genome_ref.insert_chrom(record.id(), record.seq().to_ascii_uppercase());
 
         /*
         let chrom = record.id().to_string();
@@ -105,10 +114,8 @@ mod tests {
 
     #[test]
     fn test_simplify_ambiguous_dna_bases() {
-        let mut chroms = HashMap::default();
-        chroms.insert(String::from("foo"), b"ACGT1234acgtNNNNMMMM".to_vec());
-        let mut genome_ref = GenomeRef { chroms };
-
+        let mut genome_ref = GenomeRef::default();
+        genome_ref.insert_chrom("foo", b"ACGT1234acgtNNNNMMMM".to_vec());
         genome_ref.simplify_ambiguous_dna_bases();
 
         assert_eq!(genome_ref.chroms["foo"], b"ACGTNNNNNNNNNNNNNNNN".to_vec());

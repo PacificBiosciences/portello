@@ -1,3 +1,6 @@
+mod segment_phase_set_blocks;
+mod write_phased_het_vcf;
+
 use std::sync::{Arc, Mutex};
 
 use camino::Utf8Path;
@@ -9,13 +12,16 @@ use rust_vc_utils::aux::remove_aux_if_found;
 use rust_vc_utils::cigar::get_cigar_ref_offset;
 use rust_vc_utils::cigar::left_shift_indels;
 use rust_vc_utils::{
-    ChromList, IntRange, ProgressReporter, SeqOrderSplitReadSegment, bam_reg2bin,
+    ChromList, IntRange, ProgressReporter, RegionMap, SeqOrderSplitReadSegment, bam_reg2bin,
     get_alignment_end, get_region_segments, get_seq_order_read_split_segments, rev_comp_in_place,
 };
 use unwrap::unwrap;
 
-use crate::cli;
-use crate::contig_alignment_scanner::{AllContigMappingInfo, ContigMappingSegmentInfo};
+use self::segment_phase_set_blocks::segment_phase_set_blocks;
+use crate::cli::{self, InputAssemblyMode};
+use crate::contig_alignment_scanner::{
+    AllContigMappingInfo, ChromPhaseSetMap, ContigMappingInfo, ContigMappingSegmentInfo,
+};
 use crate::globals::{PROGRAM_NAME, PROGRAM_VERSION};
 use crate::liftover_read_alignment::liftover_read_alignment;
 use crate::simplify_alignment_indels::simplify_alignment_indels;
@@ -25,8 +31,10 @@ type SharedBamWriter = Arc<Mutex<bam::Writer>>;
 
 const NM_AUX_TAG: &[u8] = b"NM";
 const SA_AUX_TAG: &[u8] = b"SA";
+const HP_AUX_TAG: &[u8] = b"HP";
 const PS_AUX_TAG: &[u8] = b"PS";
 const ZM_AUX_TAG: &[u8] = b"ZM";
+const ZS_AUX_TAG: &[u8] = b"ZS";
 
 /// Create bam header for the portello alignment output files
 ///
@@ -109,9 +117,11 @@ fn clone_record(record: &bam::Record) -> bam::Record {
     remove_aux_if_found(&mut remapped_record, NM_AUX_TAG);
 
     // remove all aux tags that will be added/modified:
-    remove_aux_if_found(&mut remapped_record, SA_AUX_TAG);
+    remove_aux_if_found(&mut remapped_record, HP_AUX_TAG);
     remove_aux_if_found(&mut remapped_record, PS_AUX_TAG);
+    remove_aux_if_found(&mut remapped_record, SA_AUX_TAG);
     remove_aux_if_found(&mut remapped_record, ZM_AUX_TAG);
+    remove_aux_if_found(&mut remapped_record, ZS_AUX_TAG);
 
     remapped_record
 }
@@ -130,6 +140,55 @@ fn reverse_alignment_seq_and_qual(record: &mut bam::Record) {
     let qname = record.qname().to_vec();
     let cigar = record.cigar();
     record.set(&qname, Some(&cigar), &rev_seq, &rev_qual);
+}
+
+/// Set PS tag based on phase set regions in contig_segment_info
+///
+/// Return true if a PS tag is set
+///
+fn set_bam_record_ps_tag(
+    seg_start: i64,
+    seg_end: i64,
+    phase_sets: &RegionMap,
+    record: &mut bam::Record,
+) -> bool {
+    let phase_set_intervals = phase_sets
+        .find_overlaps(seg_start, seg_end)
+        .map(|x| {
+            let y = x.interval();
+            IntRange::from_pair(y.start, y.end)
+        })
+        .collect::<Vec<_>>();
+
+    // Current scheme only adds a PS flag annotation to reads wich overlap a single PS block
+    if phase_set_intervals.len() == 1 {
+        record
+            .push_aux(PS_AUX_TAG, Aux::U32(phase_set_intervals[0].start as u32))
+            .unwrap();
+        true
+    } else {
+        false
+    }
+
+    /*
+    // An alternate scheme is to select the PS region with the longest overlap to the read when multiple regions are intersecting.
+    //
+    // This was visually confusing to work with, so going back to a simple and conservative scheme for now.
+    //
+    if !phase_set_intervals.is_empty() {
+        use rust_vc_utils::get_overlap_range;
+
+        let best_interval = if phase_set_intervals.len() == 1 {
+            phase_set_intervals.into_iter().next().unwrap()
+        } else {
+            let seg_range = IntRange::from_pair(seg_start, seg_end);
+            phase_set_intervals
+                .into_iter()
+                .max_by_key(|x| get_overlap_range(&x, &seg_range).unwrap().size())
+                .unwrap()
+        };
+    }
+    */
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -251,17 +310,17 @@ fn get_liftover_alignment_for_read_and_contig_segment(
         let original_read_mapq = remapped_record.mapq();
         remapped_record.set_mapq(contig_mapq);
 
-        // Set PS tag based on the contig id and split segment number
+        // Set ZS tag based on the contig id and split segment number
         let contig_index = read_segment.chrom_index;
         let contig_name = &contig_list.data[contig_index].label;
-        let ps_tag = format!(
+        let zs_tag = format!(
             "{}_split{}{}",
             contig_name,
             contig_segment_index,
             if contig_is_fwd_strand { "+" } else { "-" }
         );
         remapped_record
-            .push_aux(PS_AUX_TAG, Aux::String(&ps_tag))
+            .push_aux(ZS_AUX_TAG, Aux::String(&zs_tag))
             .unwrap();
 
         remapped_record
@@ -275,8 +334,34 @@ fn get_liftover_alignment_for_read_and_contig_segment(
             reverse_alignment_seq_and_qual(&mut remapped_record)
         };
 
-        let ref2_end = get_alignment_end(&remapped_record) as usize;
-        remapped_record.set_bin(bam_reg2bin(remapped_record.pos() as usize, ref2_end));
+        let ref2_end = get_alignment_end(&remapped_record);
+        remapped_record.set_bin(bam_reg2bin(
+            remapped_record.pos() as usize,
+            ref2_end as usize,
+        ));
+
+        let is_ps_tag_set = set_bam_record_ps_tag(
+            ref2_pos,
+            ref2_end,
+            &contig_to_ref_mapping_segment_info.phase_sets,
+            &mut remapped_record,
+        );
+
+        if is_ps_tag_set {
+            // Set HP tag based on contig segment info
+            //
+            // Stick to a conservative usage of HP to keep things familiar, only use 1 and 2:
+            //
+            if let Some(hap_id) = contig_to_ref_mapping_segment_info.hap_id
+                && hap_id < 2
+            {
+                // Add one to tag value so that we start with HP:1 as expected:
+                let tag_hap_id = (hap_id + 1) as i16;
+                remapped_record
+                    .push_aux(HP_AUX_TAG, Aux::I16(tag_hap_id))
+                    .unwrap();
+            }
+        }
 
         // Set all reads to supplementary until we determine the primary alignment
         remapped_record.set_supplementary();
@@ -366,7 +451,7 @@ fn finish_remapped_alignment_set(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn scan_chromosome_segment(
+fn scan_contig_segment(
     bam_reader: &mut bam::IndexedReader,
     reference: &[Vec<u8>],
     ref_chrom_list: &ChromList,
@@ -374,7 +459,7 @@ fn scan_chromosome_segment(
     contig_index: usize,
     begin: i64,
     end: i64,
-    all_contig_mapping_info: &AllContigMappingInfo,
+    all_contig_mapping_info: &[ContigMappingInfo],
     is_target_region: bool,
     remapped_bam_writer: &mut SharedBamWriter,
     progress_reporter: &ProgressReporter,
@@ -395,7 +480,7 @@ fn scan_chromosome_segment(
 
         assert!(!record.is_unmapped());
 
-        // Determine if this is the primary or supplemental alignment, we want to parse all the breakpoints from a read
+        // Determine if this is the primary or supplementary alignment, we want to parse all the breakpoints from a read
         // once, so working exclusively with the primary alignment should allow this.
         //
         // Requiring the read to start in the worker region prevents duplicated read output.
@@ -492,7 +577,7 @@ fn scan_chromosome_segment(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn scan_chromosome_segments(
+fn scan_contig_segments(
     worker_thread_dataset: BamReaderWorkerThreadDataSet,
     scan_settings: &ScanSettings,
     reference: &[Vec<u8>],
@@ -500,7 +585,7 @@ fn scan_chromosome_segments(
     contig_list: &ChromList,
     contig_index: usize,
     contig_size: u64,
-    all_contig_mapping_info: &AllContigMappingInfo,
+    all_contig_mapping_info: &[ContigMappingInfo],
     is_target_region: bool,
     remapped_bam_writer: &mut SharedBamWriter,
     progress_reporter: &ProgressReporter,
@@ -516,7 +601,7 @@ fn scan_chromosome_segments(
                 let worker_id = rayon::current_thread_index().unwrap();
                 let bam_reader = &mut worker_thread_dataset[worker_id].lock().unwrap().bam_reader;
 
-                scan_chromosome_segment(
+                scan_contig_segment(
                     bam_reader,
                     reference,
                     ref_chrom_list,
@@ -558,9 +643,9 @@ fn scan_unmapped_reads(
     }
 }
 
-struct ScanSettings {
+pub struct ScanSettings {
     /// This defines how large of a chromosome segment should be processed by a single thread
-    segment_size: u64,
+    pub segment_size: u64,
 }
 
 pub fn scan_and_remap_reads(
@@ -568,7 +653,8 @@ pub fn scan_and_remap_reads(
     thread_count: usize,
     reference: &[Vec<u8>],
     ref_chrom_list: &ChromList,
-    all_contig_mapping_info: &AllContigMappingInfo,
+    mut all_contig_mapping_info: AllContigMappingInfo,
+    annotated_phase_set_ranges: Vec<ChromPhaseSetMap>,
     is_target_region: bool,
 ) {
     let scan_settings = &ScanSettings {
@@ -608,21 +694,42 @@ pub fn scan_and_remap_reads(
         .build()
         .unwrap();
 
+    // Run pre-scan of read alignments to segment phase sets out of larger blocks defined by contig alignment segments:
+    if settings.input_assembly_mode == InputAssemblyMode::partially_phased {
+        segment_phase_set_blocks(
+            assembly_contig_list,
+            &worker_thread_dataset,
+            &worker_pool,
+            &mut all_contig_mapping_info,
+            annotated_phase_set_ranges,
+            settings.phased_het_vcf_prefix.as_deref(),
+            &settings.ref_filename,
+            reference,
+            ref_chrom_list,
+            thread_count,
+        );
+    }
+
+    let all_contig_mapping_info = &*all_contig_mapping_info;
+
     let contig_count = assembly_contig_list.data.len();
 
-    let genome_kb = assembly_contig_list
+    let assembly_kb = assembly_contig_list
         .data
         .iter()
         .map(|x| x.length)
         .sum::<u64>()
         / 1000;
     let progress_reporter = &ProgressReporter::new(
-        genome_kb,
+        assembly_kb,
         "Remapped read alignments from",
         "assembly contig kb",
         false,
     );
 
+    info!("Remapping read to contig alignments onto reference");
+
+    // Run primary read liftover loop:
     worker_pool.scope(move |scope| {
         {
             let worker_thread_dataset = worker_thread_dataset.clone();
@@ -642,7 +749,7 @@ pub fn scan_and_remap_reads(
             let worker_thread_dataset = worker_thread_dataset.clone();
             let mut remapped_bam_writer = remapped_bam_writer.clone();
             scope.spawn(move |_| {
-                scan_chromosome_segments(
+                scan_contig_segments(
                     worker_thread_dataset,
                     scan_settings,
                     reference,

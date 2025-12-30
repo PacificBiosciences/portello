@@ -57,18 +57,21 @@ pub fn get_seq_order_read_split_segments(
     chrom_list: &ChromList,
     record: &Record,
 ) -> Vec<SeqOrderSplitReadSegment> {
-    /// Get the start and end positions of a split read segment in read coordinates oriented in original sequencing order
+    let ignore_hard_clip = false;
+
+    /// Get the start and end positions of a split read segment in read coordinates oriented in original sequencing
+    /// order
     ///
-    /// Given read_start and read_end computed for the read segment in the current alignment direction, we need to reverse the
-    /// computation of start and end to get the read coordinates back to sequencing order.
+    /// Given read_start and read_end computed for the read segment in the current alignment direction, we need to
+    /// reverse the computation of start and end to get the read coordinates back to sequencing order.
     ///
-    /// Note that start and end here correspond to the bed-style range coordinates (zero-indexed, half-closed). This means that
-    /// the reverse stand flip in the logic below does not preserve exact read positions, but also flips the start and end to the
-    /// respective right side of the breakend in each order.
+    /// Note that start and end here correspond to the bed-style range coordinates (zero-indexed, half-closed). This
+    /// means that the reverse stand flip in the logic below does not preserve exact read positions, but also flips the
+    /// start and end to the respective right side of the breakend in each order.
     ///
-    /// Example:
-    /// For a 100 base read segment mapped in reverse orientation to the reference with CIGAR string 80S15M5S, implying start and end
-    /// read positions of 80 to 95 in segment mapping orieintation, this method reports the position tuple (5,20)
+    /// Example: For a 100 base read segment mapped in reverse orientation to the reference with CIGAR string 80S15M5S,
+    /// implying start and end read positions of 80 to 95 in segment mapping orieintation, this method reports the
+    /// position tuple (5,20)
     ///
     fn get_seq_order_read_pos(
         read_start: usize,
@@ -84,7 +87,8 @@ pub fn get_seq_order_read_split_segments(
     }
 
     let (primary_read_size, mut seq_order_read_split_segments) = {
-        let (read_start, read_end, read_size) = get_read_clip_positions(&record.cigar(), false);
+        let (read_start, read_end, read_size) =
+            get_read_clip_positions(&record.cigar(), ignore_hard_clip);
         let (seq_order_read_start, seq_order_read_end) =
             get_seq_order_read_pos(read_start, read_end, read_size, !record.is_reverse());
         let primary_segment = SeqOrderSplitReadSegment {
@@ -109,7 +113,7 @@ pub fn get_seq_order_read_split_segments(
                 panic!("Bam record split segment id unaligned in read {qname}");
             }
             let (read_start, read_end, read_size) =
-                get_read_clip_positions(&sa_segment.cigar, false);
+                get_read_clip_positions(&sa_segment.cigar, ignore_hard_clip);
             assert_eq!(primary_read_size, read_size);
             let (seq_order_read_start, seq_order_read_end) =
                 get_seq_order_read_pos(read_start, read_end, read_size, sa_segment.is_fwd_strand);
@@ -140,7 +144,8 @@ pub fn get_seq_order_read_split_segments(
         seq_order_read_split_segments.sort_by_key(|x| x.seq_order_read_start);
     }
 
-    // Sanity check the final split read set to ensure that start and end coordinates define a non-empty range in each segment:
+    // Sanity check the final split read set to ensure that start and end coordinates define a non-empty range in each
+    // segment:
     //
     for s in seq_order_read_split_segments.iter() {
         if s.seq_order_read_start >= s.seq_order_read_end {

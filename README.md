@@ -30,6 +30,13 @@ reads are grouped by their associated assembly contig, to create a phased-like v
 
 See the [user guide](docs/user_guide.md) for details on getting started with portello.
 
+## Reference
+
+Portello is still under development. Some background and performance information is available from our 2025 CSHL Genome
+Informatics poster available/citable from Zenodo here:
+
+[Saunders, C., Kronenberg, Z., Holt, J., Rowell, W., & Eberle, M. (2025). Portello: Making global assembly more effective for rare-disease WGS. CSHL Genome Informatics, CSHL. Zenodo.](https://doi.org/10.5281/zenodo.17553274)
+
 ## DISCLAIMER
 
 THIS WEBSITE AND CONTENT AND ALL SITE-RELATED SERVICES, INCLUDING ANY DATA, ARE PROVIDED "AS IS," WITH ALL FAULTS, WITH NO REPRESENTATIONS OR WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED, INCLUDING, BUT NOT LIMITED TO, ANY WARRANTIES OF MERCHANTABILITY, SATISFACTORY QUALITY, NON-INFRINGEMENT OR FITNESS FOR A PARTICULAR PURPOSE. YOU ASSUME TOTAL RESPONSIBILITY AND RISK FOR YOUR USE OF THIS SITE, ALL SITE-RELATED SERVICES, AND ANY THIRD PARTY WEBSITES OR APPLICATIONS. NO ORAL OR WRITTEN INFORMATION OR ADVICE SHALL CREATE A WARRANTY OF ANY KIND. ANY REFERENCES TO SPECIFIC PRODUCTS OR SERVICES ON THE WEBSITES DO NOT CONSTITUTE OR IMPLY A RECOMMENDATION OR ENDORSEMENT BY PACIFIC BIOSCIENCES.

@@ -154,8 +154,8 @@ dependencies = [
  "serde",
  "serde_derive",
  "statrs",
- "strum",
- "strum_macros",
+ "strum 0.26.3",
+ "strum_macros 0.26.4",
  "thiserror 2.0.16",
  "triple_accel",
  "vec_map",
@@ -170,7 +170,7 @@ dependencies = [
  "derive-new 0.6.0",
  "lazy_static",
  "regex",
- "strum_macros",
+ "strum_macros 0.26.4",
  "thiserror 1.0.69",
 ]
 
@@ -1282,8 +1282,9 @@ dependencies = [
 
 [[package]]
 name = "portello"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
+ "bio",
  "camino",
  "chrono",
  "clap",
@@ -1296,6 +1297,7 @@ dependencies = [
  "rust-htslib",
  "rust-vc-utils",
  "simple-error",
+ "strum 0.27.2",
  "unwrap",
  "vergen-gitcl",
 ]
@@ -1761,6 +1763,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fec0f0aef304996cf250b31b5a10dee7980c85da9d759361292b8bca5a18f06"
 
 [[package]]
+name = "strum"
+version = "0.27.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af23d6f6c1a224baef9d3f61e287d2761385a5b88fdab4eb4c6f11aeb54c4bcf"
+dependencies = [
+ "strum_macros 0.27.2",
+]
+
+[[package]]
 name = "strum_macros"
 version = "0.26.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1770,6 +1781,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "rustversion",
+ "syn 2.0.106",
+]
+
+[[package]]
+name = "strum_macros"
+version = "0.27.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7695ce3845ea4b33927c055a39dc438a45b059f7c1b3d91d38d10355fb8cbca7"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
  "syn 2.0.106",
 ]
 

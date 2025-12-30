@@ -1,9 +1,30 @@
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::Datelike;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use simple_error::{SimpleResult, bail};
 
 use crate::globals::PROGRAM_VERSION;
+
+/// Input assembly mode options
+///
+/// Used to select the strategy to annotate phase information on reads
+///
+/// Note that enum values and their doc comments appear in the cmdline help.
+///
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, strum::Display, ValueEnum)]
+#[allow(non_camel_case_types)]
+pub enum InputAssemblyMode {
+    /// Set this option if input assembly contigs are fully phased (by trio-binning, Hi-C, etc..) such that the assembly haplotypes
+    /// should be trusted when making read phasing haplotags.
+    ///
+    fully_phased,
+
+    /// Set this option if input assembly assembly contigs are psuedo-phased/dual-assembly output
+    /// that we assume contain many haplotype swich errors. In this case read support will be used
+    /// to segment smaller phase sets for read phasing haplotags.
+    ///
+    partially_phased,
+}
 
 #[derive(Parser)]
 #[command(
@@ -51,15 +72,18 @@ pub struct Settings {
     ///
     /// This file is written in BAM format
     ///
-    /// These reads are not well represented in the assembly contigs, and recommended for supplemental remapping to the
-    /// target genome. These types of unmapped reads are expected to increase at lower sequencing coverage.
-    ///
     #[arg(long, value_name = "FILE")]
     pub unassembled_read_output: Utf8PathBuf,
 
     /// Genome reference in FASTA format
     #[arg(long = "ref", value_name = "FILE")]
     pub ref_filename: Utf8PathBuf,
+
+    /// The input assembly mode changes portello's strategy for phasing annotation in the reampped read
+    /// output.
+    ///
+    #[arg(long, value_enum, value_name = "MODE")]
+    pub input_assembly_mode: InputAssemblyMode,
 
     /// Specify a target region for conversion
     ///
@@ -68,6 +92,17 @@ pub struct Settings {
     ///
     #[arg(long)]
     pub target_region: Option<String>,
+
+    /// Specify an output VCF prefix for phased heterozygous small variant calls from the input assembly contigs
+    ///
+    /// This option is only valid for the "partially-phased" input-assembly-mode, and is only intended for debugging and
+    /// benchmarking the accuracy of the read haplotagging. Per this goal, only phase-eligible heterozygous variants are
+    /// included in the output. It is intended to be used with a benchmarking tool such as whatshap compare.
+    ///
+    /// The output files produced by this option will be {PREFIX}.vcf.gz and {PREFIX}.vcf.gz.tbi
+    ///
+    #[arg(long, value_name = "PREFIX")]
+    pub phased_het_vcf_prefix: Option<Utf8PathBuf>,
 
     /// Number of threads to use. Defaults to all logical cpus detected.
     #[arg(long = "threads", value_name = "THREAD_COUNT")]
@@ -116,6 +151,16 @@ fn validate_and_fix_settings_impl(settings: &Settings) -> SimpleResult<DerivedSe
     }
 
     validate_output_dir_exists(&settings.unassembled_read_output, "unassembled read output")?;
+
+    if let Some(phased_het_vcf_prefix) = settings.phased_het_vcf_prefix.as_ref() {
+        if settings.input_assembly_mode != InputAssemblyMode::partially_phased {
+            bail!(
+                "phased-het-vcf-prefix can only be specified for the partially-phased input-assembly-mode"
+            );
+        } else {
+            validate_output_dir_exists(phased_het_vcf_prefix, "phased het output vcf")?;
+        }
+    }
 
     let thread_count = match settings.thread_count_option {
         Some(count) => {

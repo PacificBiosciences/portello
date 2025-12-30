@@ -34,7 +34,7 @@ fn are_segments_joinable(seg1: &SeqOrderSplitReadSegment, seg2: &SeqOrderSplitRe
     //    In reverse direction: Start of split read 2 preceeds end of split read 1, with a gap of less than max_segment_ref_gap bases
     // 5. Same mapq (at least for first pass at this)
     //
-    let max_segment_ref_gap = 1000;
+    let max_segment_ref_gap = 5000;
 
     if seg1.chrom_index != seg2.chrom_index || seg1.is_fwd_strand != seg2.is_fwd_strand {
         false
@@ -121,6 +121,16 @@ fn join_segments(
     seg_info1.contig_to_ref_map = contig_to_ref_map;
 }
 
+/// Join colinear contig alignment segments
+///
+/// When two adjacent contig split alignments also form a colinear alignment, then join them back together into one
+/// alignment.
+///
+/// We typically see colinear split alignments from minimap contig alingments due to its Z-drop criteria being met in a
+/// region of substantial refernece divergence. The Z-drop setting itself is typically important to tune for segdup
+/// alignments, so better to correct for contig alignment contiguity here while leaving the client the freedom to tune
+/// the contig mapper as necessary.
+///
 pub fn join_colinear_contig_segments(result: &mut AllContigMappingInfo) {
     let debug = false;
 

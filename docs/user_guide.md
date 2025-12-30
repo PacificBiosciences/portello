@@ -22,6 +22,9 @@ The expected workflow to use it is:
 - Align sample reads directly to consolidated assembly contigs using pbmm2
 - Run portello on the above two alignment outputs to lift sample read mappings from the assembly to the reference.
 
+Note that the choice of mappers and mapping parameters can have a substantial impact on downstream small variant calling
+quality. It is recommended to carefully review the corresponding [Inputs](#inputs) section before starting.
+
 ## Getting Started
 
 ### Installation
@@ -32,16 +35,16 @@ release tarball, or via conda as described below.
 #### Install from GitHub
 
 To install portello from github, download the latest release tarball compiled for 64-bit Linux on the [github release
-channel](https://github.com/PacificBiosciences/portello/releases/latest), then unpack the tar file. Using v0.6.1 as an
+channel](https://github.com/PacificBiosciences/portello/releases/latest), then unpack the tar file. Using v0.7.0 as an
 example, the tar file can be downloaded and unpacked as follows:
 
-    wget https://github.com/PacificBiosciences/portello/releases/download/v0.6.1/portello-v0.6.1-x86_64-unknown-linux-gnu.tar.gz
-    tar -xzf portello-v0.6.1-x86_64-unknown-linux-gnu.tar.gz
+    wget https://github.com/PacificBiosciences/portello/releases/download/v0.7.0/portello-v0.7.0-x86_64-unknown-linux-gnu.tar.gz
+    tar -xzf portello-v0.7.0-x86_64-unknown-linux-gnu.tar.gz
 
 The portello binary is found in the `bin/` directory of the unpacked file distribution. This can be run with the help
 option to test the binary and review latest usage details:
 
-    portello-v0.6.1-x86_64-unknown-linux-gnu/bin/portello --help
+    portello-v0.7.0-x86_64-unknown-linux-gnu/bin/portello --help
 
 #### Install from conda
 
@@ -71,14 +74,16 @@ portello \
   --ref $ref_fasta \
   --assembly-to-ref $asm_to_ref_bam \
   --read-to-assembly $read_to_asm_bam \
+  --input-assembly-mode partially-phased \
   --remapped-read-output - \
   --unassembled-read-output unassembled.bam |\
 samtools sort -@$threads - --write-index -o remapped.sort.bam
 ```
 
-When viewing the output `remapped.sort.bam` in IGV, it is recommended to group on the `PS` tag, to see a pseudo-phased
-view of the read alignments by grouping the reads to their respective assembly contigs. See the [Tags](#tags) section
-below for details of the `PS` tag string.
+The output `remapped.sort.bam` will include standard haplotagging annotations using the `PS` and `HP` tags, which should
+help to visualize typical diploid regions. For more complicated regions, it is best to group reads in IGV by the `ZS`
+tag, which annotates the corresponding contig alignment segment for each read. See the [Tags](#tags) section below for
+details of the `ZS` tag string.
 
 ## Inputs
 
@@ -93,6 +98,14 @@ trio-binning. Portello has been tested with such inputs from both [hifiasm](http
 
 For either assembler, the contigs for each haplotype should be extracted to fasta format, and the two sets of
 haplotype specific contigs should be concatenated into a single fasta for use in the alignment steps below.
+
+Note that the type of input contigs need to be conveyed to portello as well so that its phasing/read-haplotagging
+routines can be appropriately set. Use `--input-assembly-mode partially-phased` for partially-phased/dual assembly
+output and `--input-assembly-mode fully-phased` otherwise. See the [Phasing](#phasing) section below for more details.
+
+Note that while portello has been primarily tested with assemlby contigs, it can work with unitig input as well. Phasing
+and small variant calling quality appear to be lower from unitig input compared to the partially-phased contig output
+from the same assembly.
 
 ### Read-to-assembly alignments
 
@@ -143,7 +156,7 @@ left-shifted indels. Portello will take steps to preserve this left-shifting in 
 ## Outputs
 
 All BAM outputs from portello are unsorted. The two bam output files are for "unassembled" and "remapped" reads. Every
-input read should be represented by exactly one primary read in one of the two outputs files. Both of these output files
+input read should be represented by exactly one primary read in one of the two output files. Both of these output files
 may contain unmapped reads, but they're separated into two separate files because the unmapped reads in each file have
 different interpretations relevant to downstream processing steps, as discussed below.
 
@@ -162,9 +175,11 @@ the liftover reads.
 
 This output contains all reads that mapped to the assembly contigs, and have been lifted over to the target reference
 genome. Unmapped reads in this file should correspond to assembly contig regions which did not map to the reference, so
-may represent population-specific and large insertion sequences.
+may represent population-specific and large non-templated insertion sequences.
 
 ## Secondary analysis on portello remapped output
+
+### Small variant calling
 
 Portello remapped read output has been tested on DeepVariant and some other secondary analysis tools designed for
 conventional pbmm2-mapped BAM inputs. Results generally seem very good. DeepVariant, run with current best-practice
@@ -173,13 +188,18 @@ primary benefits of assembly-based liftover are for structural variants and larg
 variant calling, this DeepVariant performance trend demonstrates that portello alignments are properly aligned in
 other contexts as well.
 
-Note that although we recommend viewing portello alignments in IGV with reads grouped by the `PS` tag, we recommend that
-you **Interpret the PS tag with care**. The PS tag in the portello output shows which contig each read was mapped to,
-and more specifically which split read segment of the contig it was mapped to. When visualizing portello BAMs in IGV it
-is extremely useful to show a pseudo-phased view of the reads by grouping them on this tag. Note, however that each
-assembly algorithm has a different approach to contig contiguity through LOH regions, so a read segment with one PS tag
-is not equivalent to a single haplotype phase block, since it could continue through large LOH regions with possible
-phase switching.
+### Phasing / IGV visualization
+
+For viewing in IGV, portello provides haplotagged BAM output automatically, using the read to contig mappings to
+implement a variation on read-backed phasing, with this logic adjusted appropriately for either partially-phased or
+fully-phased contig input. This means that typical phased read viewing patterns relying on `PS` and `HP` tag annotations
+on the reads will work in typical diploid regions.
+
+For viewing the reads in IGV in more complex regions, the reads can be grouped by the `ZS` tag, which annotates each read
+according to the assembly contig alignment segment it was aligned to. This creates a phasing-like view of the reads, but the viewer
+should note the potential for phasing switch errors when these annotation are derived from partially-phased contigs.
+
+See the [Phasing](#phasing) and [Tags](#tags) sections below for more details.
 
 ## Other Notes
 
@@ -213,11 +233,43 @@ The MAPQ value of liftover read alignment segments is taken form the contig spli
 segment was mapped to. The read's original MAPQ to the contig alignments is stored in the record under `ZM`. This will
 often be zero, which is most often a reflection of ambiguous alignment between the 2 parental contigs.
 
+### Phasing
+
+Portello will automatically add haplotagging annotations (`HP` and `PS` tags) to the remapped read output based on the
+read-to-contig alignments. These annotations are currently restricted to simple diploid regions where exactly two contig
+alignment segments span the reference. The phasing strategy will change based on whether the input assembly contigs are
+fully-phased or partially-phased (as conveyed to portello by the command-line `--input-assembly-mode` setting).
+
+For fully-phased contigs, the phasing annotation will create phase-set blocks spanning each region where two contig
+alignment segments span the reference, assuming the contigs themselves are free of switch errors.
+
+For partially-phased contigs, the phasing annotation method will start with the larger phase-set annotations from the
+fully-phased annotation mode, but then further subdivide phase-set blocks according to whether any reads span
+heterozygous variant sites. The method is similar to mapping-based read backed phasing except that the read support
+is evaluated based on alignments to the contigs (the phasing evaluation occurs before read-to-reference re-mapping).
+The partially-phased haplotagging mode will slightly increase portello'w runtime and memory usage.
+
+#### Phased heterozygous VCF output
+
+When run with the `partiall-phased` input assembly mode, an optional VCF file can be produced containing all
+phase-eligible heterozygous small variants with their corresponding phasing annotations. To produce this VCF, provide a
+file prefix using the `--phased-het-vcf-prefix` argument. The VCF output produced by this procedure is only intended for
+debugging and benchmarking the BAM haplotag output -- the heterozygous variants provided in this output file (and used
+for the phasing procedure) are produced directly from differences in the assembly contig sequencers, so should not be as
+accurate as the output of a dedicated small variant calling method such as DeepVariant.
+
 ### Tags
 
-The following diagnostic tags added to the remapped read output, these are likely to change in future:
+The following standard haplotagging values are added to the remapped read output:
 
-`PS` - This tag can be used for read grouping in IGV to create a pseudo-phased view of the alignments. It is
+`HP` - The `HP` tag with value 1 or 2 is added in regions with coverage by two contig alignment segments.
+
+`PS` - The `PS` tag provides the phase set id in diploid regions. The PS value corresponds to the start position of the
+first heterozygous variant in the phase set block.
+
+The following custom diagnostic tags added to the remapped read output, these could change in future updates:
+
+`ZS` - This tag can be used for read grouping in IGV to create a pseudo-phased view of the alignments. It is
 `{contig_name}_split{split_alignment_no}{strand}`, where `contig_name` is the contig the read aligned to, `split
 alignment no` refers to which of that contig's (colinear-joined) split alignment segments the read aligned to, and
 `strand` is "+" or "-" for the contig alignments orientation to the reference.

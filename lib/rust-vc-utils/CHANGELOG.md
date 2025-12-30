@@ -1,15 +1,19 @@
 ## v0.33.0 - 2025-XX-XX
 
 ### Added
+- Add DepthTracker from sawfish
+- Add RegionMap from sawfish
 - Add drop_true from sawfish
 - New methods to remove clipped regions from cigars
 
 ### Changed
-
 - In all cigar shift routines, reverse cigar indel cluster ordering such that insertion state is always ordered first
 - Add method to restrict GenomeRef sequence characters
 - Make reverse comp methods tolerant to unexpected characters
   - Still not supporting IUPAC ambiguity codes
+
+### Fixed
+- Fix off-by-one issue in IntRange::intersect_range
 
 ## v0.32.0 - 2025-08-07
 

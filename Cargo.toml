@@ -1,6 +1,6 @@
 [package]
 name = "portello"
-version = "0.6.1"
+version = "0.7.0"
 authors = ["Chris Saunders <csaunders@pacificbiosciences.com>"]
 description = "Projects read alignments from personal assembly to reference"
 edition = "2024"
@@ -10,6 +10,7 @@ license-file="LICENSE.md"
 vergen-gitcl = "1"
 
 [dependencies]
+bio = "2"
 camino = "1"
 chrono = "0.4"
 clap = { version = "4", features = ["derive", "suggestions"] }
@@ -22,4 +23,5 @@ rayon = "1"
 rust-htslib = { version = "0.50", default-features = false, features = ["bzip2", "lzma"] }
 rust-vc-utils = { path="lib/rust-vc-utils" }
 simple-error = "0.3"
+strum = { version = "0.27", features = ["derive"] }
 unwrap = "1"

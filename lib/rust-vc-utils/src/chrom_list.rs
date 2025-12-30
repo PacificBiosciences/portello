@@ -2,6 +2,8 @@ use std::collections::HashMap;
 
 use rust_htslib::bam;
 
+use crate::GenomeRef;
+
 #[derive(Clone, Debug)]
 pub struct ChromInfo {
     pub label: String,
@@ -40,6 +42,15 @@ impl ChromList {
 
         let bam_reader = bam::Reader::from_path(bam_filename).unwrap();
         Self::from_bam_header(bam_reader.header())
+    }
+
+    pub fn from_genome_ref(genome_ref: &GenomeRef) -> Self {
+        let mut chrom_list = ChromList::default();
+        for chrom in genome_ref.chrom_input_order.iter() {
+            let size = genome_ref.chroms[chrom].len() as u64;
+            chrom_list.add_chrom(chrom, size);
+        }
+        chrom_list
     }
 
     pub fn add_chrom(&mut self, label: &str, length: u64) {

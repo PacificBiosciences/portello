@@ -1,5 +1,17 @@
 # Change Log
 
+## v0.7.0 - 2025-12-30
+
+- Phasing update to add haplotag annotations to remapped read output (CR-551)
+  - Automatically set standard phasing `HP` and `PS` tags on remapped reads where a simple diploid contig mapping
+    pattern occurs on the reference genome.
+  - Phasing annotation method can be adjusted by setting the input mode with the new `--input-assembly-mode` argument:
+    - `fully-phased` mode assumes that the input contigs represent a phased haplotype
+    - `partially-phased` mode assumes that the input contigs contain switch errors, and finds phase-sets from the
+      underlying read support
+  - If updating from a previous portello version, note that the read's assembly contig segment information is now moved
+    to the custom `ZS` tag ( this previously annotated using the `PS` tag)
+
 ## v0.6.1 - 2025-12-16
 
 - Fix error message to describe chromosome consistency issues between assembly-to-ref alignments and the reference fasta [PacificBiosciences/portello#1]

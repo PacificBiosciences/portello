@@ -80,15 +80,14 @@ fn get_final_gci(match_bases: u32, mismatch_events: u32) -> f64 {
 ///
 /// This method will work with cigar strings using either the =/X or M match state.
 ///
-pub fn get_gap_compressed_identity(
+pub fn get_gap_compressed_identity_from_alignment(
     mut ref_pos: i64,
     cigar: &[Cigar],
     read_seq: &[u8],
     ref_seq: &[u8],
+    ignore_hard_clip: bool,
 ) -> f64 {
     use Cigar::*;
-
-    let ignore_hard_clip = false;
 
     let mut mismatch_events = 0u32;
     let mut match_bases = 0u32;
@@ -126,6 +125,14 @@ pub fn get_gap_compressed_identity(
     }
 
     get_final_gci(match_bases, mismatch_events)
+}
+
+/// Get gap-compressed sequence identity from sequence alignment information
+///
+/// This is a deprecated/legacy function name which keeps the previous ignore_hard_clip=false default
+///
+pub fn get_gap_compressed_identity(ref_pos: i64, cigar: &[Cigar], read_seq: &[u8], ref_seq: &[u8]) {
+    get_gap_compressed_identity_from_alignment(ref_pos, cigar, read_seq, ref_seq, false);
 }
 
 /// Get gap-compressed sequence identity from sequence alignment information
@@ -179,12 +186,13 @@ mod tests {
     }
 
     #[test]
-    fn test_get_gap_compressed_identity() {
+    fn test_get_gap_compressed_identity_from_alignment() {
         let ref_pos = 2;
         let ref_seq = b"ACGTACGTACGT";
         let read_seq = b"GTAATCTTAC";
         let cigar = vec![Cigar::Match(4), Cigar::Ins(2), Cigar::Match(4)];
-        let gci = get_gap_compressed_identity(ref_pos, &cigar, read_seq, ref_seq);
+        let gci =
+            get_gap_compressed_identity_from_alignment(ref_pos, &cigar, read_seq, ref_seq, false);
         approx::assert_ulps_eq!(gci, 6.0 / 9.0, max_ulps = 4);
     }
 }

@@ -52,9 +52,8 @@ impl IntRange {
 
     /// Return true if the ranges intersect (adjacency does not count)
     ///
-    #[allow(dead_code)]
     pub fn intersect_range(&self, other: &IntRange) -> bool {
-        other.end >= self.start && other.start < self.end
+        other.end > self.start && other.start < self.end
     }
 
     pub fn merge(&mut self, other: &IntRange) {
@@ -149,7 +148,6 @@ pub fn get_recip_overlap(r1: &IntRange, r2: &IntRange) -> f64 {
     olap as f64 / span as f64
 }
 
-#[allow(dead_code)]
 pub fn get_overlap_range(r1: &IntRange, r2: &IntRange) -> Option<IntRange> {
     if !r1.intersect_range(r2) {
         return None;
@@ -163,6 +161,32 @@ pub fn get_overlap_range(r1: &IntRange, r2: &IntRange) -> Option<IntRange> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_intersect_pos() {
+        let i1 = IntRange::from_pair(10, 20);
+
+        assert!(!i1.intersect_pos(9));
+        assert!(!i1.intersect_pos(20));
+
+        assert!(i1.intersect_pos(10));
+        assert!(i1.intersect_pos(19));
+    }
+
+    #[test]
+    fn test_intersect_range() {
+        let i1 = IntRange::from_pair(10, 20);
+        let i2 = IntRange::from_pair(20, 30);
+
+        assert!(!i1.intersect_range(&i2));
+        assert!(!i2.intersect_range(&i1));
+
+        let i1 = IntRange::from_pair(10, 21);
+        let i2 = IntRange::from_pair(20, 30);
+
+        assert!(i1.intersect_range(&i2));
+        assert!(i2.intersect_range(&i1));
+    }
 
     #[test]
     fn test_get_int_range_distance() {

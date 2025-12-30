@@ -3,8 +3,11 @@ mod contig_alignment_scanner;
 mod globals;
 mod liftover_read_alignment;
 mod logger;
+mod merged_range_set;
 mod read_alignment_scanner;
+mod region_map_anyvalue;
 mod simplify_alignment_indels;
+mod vcf_utils;
 mod worker_thread_data;
 
 use std::process;
@@ -84,8 +87,8 @@ fn run(
 
     let reference = get_chrom_array(settings.ref_filename.as_str(), &ref_chrom_list);
 
-    let all_contig_mapping_info = scan_contig_bam(
-        &settings.assembly_to_ref_bam,
+    let (all_contig_mapping_info, annotated_phase_set_ranges) = scan_contig_bam(
+        settings,
         derived_settings.thread_count,
         &ref_chrom_list,
         &assembly_contig_list,
@@ -97,7 +100,8 @@ fn run(
         derived_settings.thread_count,
         &reference,
         &ref_chrom_list,
-        &all_contig_mapping_info,
+        all_contig_mapping_info,
+        annotated_phase_set_ranges,
         target_region.is_some(),
     );
 
